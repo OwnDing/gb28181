@@ -41,6 +41,6 @@ dist
 dist-ssr
 *.local
 
-.db
-.db-shm
-.db-wal
+*.db
+*.db-shm
+*.db-wal
