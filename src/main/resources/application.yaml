@@ -34,7 +34,8 @@ app:
     cleanup-interval-ms: 180000
   gb28181:
     enabled: true
-    local-ip: 0.0.0.0
+    auto-register-unknown-device: true
+    local-ip: 192.168.6.146
     local-port: 5060
     media-ip: 127.0.0.1
     server-id: 34020000002000000001

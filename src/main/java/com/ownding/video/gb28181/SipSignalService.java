@@ -26,6 +26,7 @@ import javax.sip.SipProvider;
 import javax.sip.SipStack;
 import javax.sip.TimeoutEvent;
 import javax.sip.Transaction;
+import javax.sip.TransactionAlreadyExistsException;
 import javax.sip.TransactionTerminatedEvent;
 import javax.sip.address.Address;
 import javax.sip.address.AddressFactory;
@@ -399,13 +400,11 @@ public class SipSignalService implements SipListener {
             online = false;
         }
 
-        if (deviceId != null) {
-            boolean updated = deviceService.updateDeviceOnlineStatusByCode(deviceId, online);
-            if (!updated) {
-                log.debug("REGISTER from unknown deviceId={}", deviceId);
-            }
-        }
+        // Respond first to avoid device-side REGISTER timeout caused by local DB processing latency.
         sendResponse(requestEvent, Response.OK);
+        if (deviceId != null) {
+            updateDeviceOnlineState(deviceId, online, request, "REGISTER");
+        }
     }
 
     private void handleMessage(RequestEvent requestEvent) throws SipException, InvalidArgumentException, ParseException {
@@ -418,10 +417,7 @@ public class SipSignalService implements SipListener {
 
         if (deviceId != null && cmdType != null) {
             if ("Keepalive".equalsIgnoreCase(cmdType)) {
-                boolean updated = deviceService.updateDeviceOnlineStatusByCode(deviceId, true);
-                if (!updated) {
-                    log.debug("Keepalive from unknown deviceId={}", deviceId);
-                }
+                updateDeviceOnlineState(deviceId, true, request, "Keepalive");
             } else if ("DeviceInfo".equalsIgnoreCase(cmdType)) {
                 persistDeviceInfo(deviceId, body);
             } else if ("Catalog".equalsIgnoreCase(cmdType)) {
@@ -435,6 +431,112 @@ public class SipSignalService implements SipListener {
             }
         }
         sendResponse(requestEvent, Response.OK);
+    }
+
+    private void updateDeviceOnlineState(String deviceId, boolean online, Request request, String source) {
+        boolean updated = deviceService.updateDeviceOnlineStatusByCode(deviceId, online);
+        if (!updated && online) {
+            updated = tryAutoRegisterDevice(deviceId, request);
+        }
+        if (!updated) {
+            log.debug("{} from unknown deviceId={}", source, deviceId);
+        }
+    }
+
+    private boolean tryAutoRegisterDevice(String deviceId, Request request) {
+        if (!appProperties.getGb28181().isAutoRegisterUnknownDevice()) {
+            return false;
+        }
+        if (deviceId == null || !deviceId.matches("\\d{20}")) {
+            return false;
+        }
+        try {
+            if (deviceService.findDeviceByCode(deviceId).isPresent()) {
+                return deviceService.updateDeviceOnlineStatusByCode(deviceId, true);
+            }
+
+            DeviceEndpoint endpoint = extractDeviceEndpoint(request);
+            String displayName = "自动接入-" + deviceId.substring(Math.max(0, deviceId.length() - 6));
+            deviceService.createDevice(new DeviceService.CreateDeviceCommand(
+                    displayName,
+                    deviceId,
+                    endpoint.host(),
+                    endpoint.port(),
+                    endpoint.transport(),
+                    null,
+                    null,
+                    "AUTO",
+                    1,
+                    "H264"
+            ));
+            boolean updated = deviceService.updateDeviceOnlineStatusByCode(deviceId, true);
+            log.info(
+                    "auto-registered GB28181 device deviceId={}, host={}, port={}, transport={}",
+                    deviceId,
+                    endpoint.host(),
+                    endpoint.port(),
+                    endpoint.transport()
+            );
+            return updated;
+        } catch (Exception ex) {
+            log.warn("auto register device failed, deviceId={}, reason={}", deviceId, ex.getMessage());
+            return false;
+        }
+    }
+
+    private DeviceEndpoint extractDeviceEndpoint(Request request) {
+        String host = null;
+        int port = -1;
+        String transport = "UDP";
+
+        ViaHeader viaHeader = (ViaHeader) request.getHeader(ViaHeader.NAME);
+        if (viaHeader != null) {
+            String viaTransport = viaHeader.getTransport();
+            if (viaTransport != null && !viaTransport.isBlank()) {
+                transport = normalizeDeviceTransport(viaTransport);
+            }
+            host = firstNonBlank(viaHeader.getReceived(), viaHeader.getHost());
+            int rPort = viaHeader.getRPort();
+            if (rPort > 0) {
+                port = rPort;
+            } else if (viaHeader.getPort() > 0) {
+                port = viaHeader.getPort();
+            }
+        }
+
+        ContactHeader contactHeader = (ContactHeader) request.getHeader(ContactHeader.NAME);
+        if (contactHeader != null
+                && contactHeader.getAddress() != null
+                && contactHeader.getAddress().getURI() instanceof SipURI contactUri) {
+            if (host == null || host.isBlank()) {
+                host = contactUri.getHost();
+            }
+            if (port <= 0 && contactUri.getPort() > 0) {
+                port = contactUri.getPort();
+            }
+            String contactTransport = contactUri.getTransportParam();
+            if ((transport == null || transport.isBlank()) && contactTransport != null && !contactTransport.isBlank()) {
+                transport = normalizeDeviceTransport(contactTransport);
+            }
+        }
+
+        if (host == null || host.isBlank()) {
+            host = "127.0.0.1";
+        }
+        if (port <= 0) {
+            port = 5060;
+        }
+        return new DeviceEndpoint(host, port, normalizeDeviceTransport(transport));
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) {
+            return first.trim();
+        }
+        if (second != null && !second.isBlank()) {
+            return second.trim();
+        }
+        return null;
     }
 
     private void persistDeviceInfo(String deviceId, String xml) {
@@ -551,9 +653,18 @@ public class SipSignalService implements SipListener {
 
         ServerTransaction serverTransaction = requestEvent.getServerTransaction();
         if (serverTransaction == null) {
-            serverTransaction = sipProvider.getNewServerTransaction(request);
+            try {
+                serverTransaction = sipProvider.getNewServerTransaction(request);
+            } catch (TransactionAlreadyExistsException ignored) {
+                serverTransaction = requestEvent.getServerTransaction();
+            }
         }
-        serverTransaction.sendResponse(response);
+        if (serverTransaction != null) {
+            serverTransaction.sendResponse(response);
+            return;
+        }
+        // Stateless fallback: improves compatibility for retransmitted UDP REGISTER/MESSAGE requests.
+        sipProvider.sendResponse(response);
     }
 
     private InviteBuildResult buildInviteRequest(InviteCommand command)
@@ -748,6 +859,13 @@ public class SipSignalService implements SipListener {
         return ListeningPoint.UDP;
     }
 
+    private String normalizeDeviceTransport(String transport) {
+        if ("TCP".equalsIgnoreCase(transport)) {
+            return "TCP";
+        }
+        return "UDP";
+    }
+
     private String normalizeChannelId(String deviceId, String value) {
         if (value == null || value.isBlank()) {
             return null;
@@ -859,6 +977,13 @@ public class SipSignalService implements SipListener {
 
     private record TargetDevice(
             String deviceId,
+            String host,
+            int port,
+            String transport
+    ) {
+    }
+
+    private record DeviceEndpoint(
             String host,
             int port,
             String transport

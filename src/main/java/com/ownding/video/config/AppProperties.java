@@ -147,6 +147,7 @@ public class AppProperties {
 
     public static class Gb28181 {
         private boolean enabled = true;
+        private boolean autoRegisterUnknownDevice = true;
         @NotBlank
         private String localIp = "0.0.0.0";
         @Min(1)
@@ -170,6 +171,14 @@ public class AppProperties {
 
         public void setEnabled(boolean enabled) {
             this.enabled = enabled;
+        }
+
+        public boolean isAutoRegisterUnknownDevice() {
+            return autoRegisterUnknownDevice;
+        }
+
+        public void setAutoRegisterUnknownDevice(boolean autoRegisterUnknownDevice) {
+            this.autoRegisterUnknownDevice = autoRegisterUnknownDevice;
         }
 
         public String getLocalIp() {
