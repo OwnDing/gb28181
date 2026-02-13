@@ -10,7 +10,7 @@ spring:
       schema-locations: classpath:schema.sql
 
 server:
-  port: 8080
+  port: 8081
 
 logging:
   level:
