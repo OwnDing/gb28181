@@ -1,8 +1,8 @@
 package com.ownding.video.gb28181;
 
 import com.ownding.video.config.AppProperties;
+import com.ownding.video.device.Device;
 import com.ownding.video.device.DeviceService;
-import gov.nist.javax.sip.header.CSeq;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -26,8 +26,6 @@ import javax.sip.SipProvider;
 import javax.sip.SipStack;
 import javax.sip.TimeoutEvent;
 import javax.sip.Transaction;
-import javax.sip.TransactionAlreadyExistsException;
-import javax.sip.TransactionDoesNotExistException;
 import javax.sip.TransactionTerminatedEvent;
 import javax.sip.address.Address;
 import javax.sip.address.AddressFactory;
@@ -36,6 +34,7 @@ import javax.sip.header.CSeqHeader;
 import javax.sip.header.CallIdHeader;
 import javax.sip.header.ContactHeader;
 import javax.sip.header.ContentTypeHeader;
+import javax.sip.header.EventHeader;
 import javax.sip.header.ExpiresHeader;
 import javax.sip.header.FromHeader;
 import javax.sip.header.Header;
@@ -49,10 +48,9 @@ import javax.sip.message.Request;
 import javax.sip.message.Response;
 import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
-import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
@@ -68,14 +66,16 @@ import java.util.regex.Pattern;
 public class SipSignalService implements SipListener {
 
     private static final Logger log = LoggerFactory.getLogger(SipSignalService.class);
-    private static final Pattern XML_TAG_PATTERN = Pattern.compile("<%s>([^<]+)</%s>", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ITEM_BLOCK_PATTERN = Pattern.compile("<Item>([\\s\\S]*?)</Item>", Pattern.CASE_INSENSITIVE);
 
     private final AppProperties appProperties;
     private final DeviceService deviceService;
+    private final Gb28181Repository gb28181Repository;
 
     private final AtomicLong cSeq = new AtomicLong(System.currentTimeMillis() % 100000000L);
-    private final Map<String, CompletableFuture<InviteResult>> pendingInviteByCallId = new ConcurrentHashMap<>();
-    private final Map<String, Dialog> dialogByCallId = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<InviteResult>> pendingInviteByCallId = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<SipCommandResult>> pendingCommandByCallId = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Dialog> dialogByCallId = new ConcurrentHashMap<>();
 
     private volatile SipFactory sipFactory;
     private volatile SipStack sipStack;
@@ -84,9 +84,10 @@ public class SipSignalService implements SipListener {
     private volatile HeaderFactory headerFactory;
     private volatile MessageFactory messageFactory;
 
-    public SipSignalService(AppProperties appProperties, DeviceService deviceService) {
+    public SipSignalService(AppProperties appProperties, DeviceService deviceService, Gb28181Repository gb28181Repository) {
         this.appProperties = appProperties;
         this.deviceService = deviceService;
+        this.gb28181Repository = gb28181Repository;
     }
 
     @PostConstruct
@@ -133,6 +134,10 @@ public class SipSignalService implements SipListener {
         pendingInviteByCallId.forEach((callId, future) ->
                 future.complete(InviteResult.failed(callId, 500, "SIP服务关闭")));
         pendingInviteByCallId.clear();
+
+        pendingCommandByCallId.forEach((callId, future) ->
+                future.complete(SipCommandResult.failed(callId, 500, "SIP服务关闭")));
+        pendingCommandByCallId.clear();
         dialogByCallId.clear();
 
         if (sipProvider != null) {
@@ -212,6 +217,43 @@ public class SipSignalService implements SipListener {
         }
     }
 
+    public SipCommandResult sendMessage(String deviceId, String xml) {
+        if (!appProperties.getGb28181().isEnabled()) {
+            return SipCommandResult.skipped("SIP信令未启用，已跳过MESSAGE");
+        }
+        ensureSipReady();
+        try {
+            TargetDevice target = resolveTargetDevice(deviceId);
+            Request request = createBaseRequest(Request.MESSAGE, target);
+            ContentTypeHeader contentTypeHeader = headerFactory.createContentTypeHeader("Application", "MANSCDP+xml");
+            request.setContent(xml == null ? "" : xml, contentTypeHeader);
+            return sendCommandAndWait(request);
+        } catch (Exception ex) {
+            return SipCommandResult.failed(null, 500, "MESSAGE发送失败: " + ex.getMessage());
+        }
+    }
+
+    public SipCommandResult sendSubscribe(String deviceId, String eventType, int expires, String xml) {
+        if (!appProperties.getGb28181().isEnabled()) {
+            return SipCommandResult.skipped("SIP信令未启用，已跳过SUBSCRIBE");
+        }
+        ensureSipReady();
+        try {
+            TargetDevice target = resolveTargetDevice(deviceId);
+            Request request = createBaseRequest(Request.SUBSCRIBE, target);
+            ExpiresHeader expiresHeader = headerFactory.createExpiresHeader(Math.max(0, expires));
+            request.setExpires(expiresHeader);
+            EventHeader eventHeader = headerFactory.createEventHeader(eventType);
+            request.addHeader(eventHeader);
+
+            ContentTypeHeader contentTypeHeader = headerFactory.createContentTypeHeader("Application", "MANSCDP+xml");
+            request.setContent(xml == null ? "" : xml, contentTypeHeader);
+            return sendCommandAndWait(request);
+        } catch (Exception ex) {
+            return SipCommandResult.failed(null, 500, "SUBSCRIBE发送失败: " + ex.getMessage());
+        }
+    }
+
     @Override
     public void processRequest(RequestEvent requestEvent) {
         Request request = requestEvent.getRequest();
@@ -287,6 +329,20 @@ public class SipSignalService implements SipListener {
             return;
         }
 
+        CompletableFuture<SipCommandResult> commandFuture = pendingCommandByCallId.get(callId);
+        if (commandFuture != null) {
+            if (statusCode >= 100 && statusCode < 200) {
+                return;
+            }
+            if (statusCode >= 200 && statusCode < 300) {
+                commandFuture.complete(SipCommandResult.success(callId, statusCode, response.getReasonPhrase()));
+            } else {
+                commandFuture.complete(SipCommandResult.failed(callId, statusCode, response.getReasonPhrase()));
+            }
+            pendingCommandByCallId.remove(callId);
+            return;
+        }
+
         if (Request.BYE.equals(method) && statusCode >= 200 && statusCode < 300) {
             dialogByCallId.remove(callId);
         }
@@ -305,9 +361,14 @@ public class SipSignalService implements SipListener {
             return;
         }
         String callId = callIdHeader.getCallId();
-        CompletableFuture<InviteResult> future = pendingInviteByCallId.remove(callId);
-        if (future != null) {
-            future.complete(InviteResult.failed(callId, 408, "SIP事务超时"));
+        CompletableFuture<InviteResult> inviteFuture = pendingInviteByCallId.remove(callId);
+        if (inviteFuture != null) {
+            inviteFuture.complete(InviteResult.failed(callId, 408, "SIP事务超时"));
+            return;
+        }
+        CompletableFuture<SipCommandResult> commandFuture = pendingCommandByCallId.remove(callId);
+        if (commandFuture != null) {
+            commandFuture.complete(SipCommandResult.failed(callId, 408, "SIP事务超时"));
         }
     }
 
@@ -351,17 +412,125 @@ public class SipSignalService implements SipListener {
         Request request = requestEvent.getRequest();
         String body = getRequestBody(request);
         String cmdType = extractXmlTag(body, "CmdType").orElse(null);
-        String deviceId = extractXmlTag(body, "DeviceID")
-                .or(() -> extractDeviceIdFromRequest(request))
-                .orElse(null);
+        String fromDeviceId = extractDeviceIdFromRequest(request).orElse(null);
+        String xmlDeviceId = extractXmlTag(body, "DeviceID").orElse(null);
+        String deviceId = fromDeviceId == null || fromDeviceId.isBlank() ? xmlDeviceId : fromDeviceId;
 
-        if (deviceId != null && "Keepalive".equalsIgnoreCase(cmdType)) {
-            boolean updated = deviceService.updateDeviceOnlineStatusByCode(deviceId, true);
-            if (!updated) {
-                log.debug("Keepalive from unknown deviceId={}", deviceId);
+        if (deviceId != null && cmdType != null) {
+            if ("Keepalive".equalsIgnoreCase(cmdType)) {
+                boolean updated = deviceService.updateDeviceOnlineStatusByCode(deviceId, true);
+                if (!updated) {
+                    log.debug("Keepalive from unknown deviceId={}", deviceId);
+                }
+            } else if ("DeviceInfo".equalsIgnoreCase(cmdType)) {
+                persistDeviceInfo(deviceId, body);
+            } else if ("Catalog".equalsIgnoreCase(cmdType)) {
+                persistCatalog(deviceId, body);
+            } else if ("RecordInfo".equalsIgnoreCase(cmdType)) {
+                persistRecordInfo(deviceId, body);
+            } else if ("Alarm".equalsIgnoreCase(cmdType)) {
+                persistAlarm(deviceId, body);
+            } else if ("MobilePosition".equalsIgnoreCase(cmdType)) {
+                persistMobilePosition(deviceId, body);
             }
         }
         sendResponse(requestEvent, Response.OK);
+    }
+
+    private void persistDeviceInfo(String deviceId, String xml) {
+        gb28181Repository.upsertDeviceProfile(new Gb28181Repository.UpsertDeviceProfileCommand(
+                deviceId,
+                extractXmlTag(xml, "DeviceName").or(() -> extractXmlTag(xml, "Name")).orElse(null),
+                extractXmlTag(xml, "Manufacturer").orElse(null),
+                extractXmlTag(xml, "Model").orElse(null),
+                extractXmlTag(xml, "Firmware").orElse(null),
+                extractXmlTag(xml, "Result").or(() -> extractXmlTag(xml, "Status")).orElse(null),
+                xml
+        ));
+    }
+
+    private void persistCatalog(String deviceId, String xml) {
+        List<Gb28181Repository.UpsertCatalogItemCommand> items = new ArrayList<>();
+        Matcher matcher = ITEM_BLOCK_PATTERN.matcher(xml);
+        while (matcher.find()) {
+            String block = matcher.group(1);
+            String channelId = extractXmlTag(block, "DeviceID").orElse(null);
+            if (channelId == null || channelId.isBlank()) {
+                continue;
+            }
+            items.add(new Gb28181Repository.UpsertCatalogItemCommand(
+                    channelId,
+                    extractXmlTag(block, "Name").orElse(channelId),
+                    inferCodec(block),
+                    normalizeChannelStatus(extractXmlTag(block, "Status").orElse("OFFLINE"))
+            ));
+        }
+        if (!items.isEmpty()) {
+            gb28181Repository.syncCatalog(deviceId, items);
+        }
+    }
+
+    private void persistRecordInfo(String deviceId, String xml) {
+        String rootDeviceId = extractXmlTag(xml, "DeviceID").orElse(null);
+        String defaultChannelId = normalizeChannelId(deviceId, rootDeviceId);
+        List<Gb28181Repository.UpsertRecordItemCommand> items = new ArrayList<>();
+        Matcher matcher = ITEM_BLOCK_PATTERN.matcher(xml);
+        while (matcher.find()) {
+            String block = matcher.group(1);
+            String itemChannelId = normalizeChannelId(
+                    deviceId,
+                    extractXmlTag(block, "DeviceID").orElse(defaultChannelId)
+            );
+            items.add(new Gb28181Repository.UpsertRecordItemCommand(
+                    itemChannelId,
+                    extractXmlTag(block, "RecordID").orElse(null),
+                    extractXmlTag(block, "Name").orElse(null),
+                    extractXmlTag(block, "Address").orElse(null),
+                    extractXmlTag(block, "StartTime").orElse(null),
+                    extractXmlTag(block, "EndTime").orElse(null),
+                    extractXmlTag(block, "Secrecy").orElse(null),
+                    extractXmlTag(block, "Type").orElse(null),
+                    extractXmlTag(block, "RecorderID").orElse(null),
+                    extractXmlTag(block, "FilePath").or(() -> extractXmlTag(block, "FileName")).orElse(null),
+                    block
+            ));
+        }
+        if (!items.isEmpty()) {
+            gb28181Repository.replaceRecordItems(deviceId, defaultChannelId, items);
+        }
+    }
+
+    private void persistAlarm(String deviceId, String xml) {
+        String alarmDeviceId = extractXmlTag(xml, "DeviceID").orElse(null);
+        String channelId = normalizeChannelId(deviceId, alarmDeviceId);
+        gb28181Repository.insertAlarm(new Gb28181Repository.UpsertAlarmEventCommand(
+                deviceId,
+                channelId,
+                extractXmlTag(xml, "AlarmMethod").orElse(null),
+                extractXmlTag(xml, "AlarmType").orElse(null),
+                extractXmlTag(xml, "AlarmPriority").orElse(null),
+                extractXmlTag(xml, "AlarmTime").orElse(null),
+                extractXmlTag(xml, "Longitude").orElse(null),
+                extractXmlTag(xml, "Latitude").orElse(null),
+                extractXmlTag(xml, "AlarmDescription").or(() -> extractXmlTag(xml, "Description")).orElse(null),
+                xml
+        ));
+    }
+
+    private void persistMobilePosition(String deviceId, String xml) {
+        String mobileDeviceId = extractXmlTag(xml, "DeviceID").orElse(null);
+        String channelId = normalizeChannelId(deviceId, mobileDeviceId);
+        gb28181Repository.insertMobilePosition(new Gb28181Repository.UpsertMobilePositionCommand(
+                deviceId,
+                channelId,
+                extractXmlTag(xml, "Time").orElse(null),
+                extractXmlTag(xml, "Longitude").orElse(null),
+                extractXmlTag(xml, "Latitude").orElse(null),
+                extractXmlTag(xml, "Speed").orElse(null),
+                extractXmlTag(xml, "Direction").orElse(null),
+                extractXmlTag(xml, "Altitude").orElse(null),
+                xml
+        ));
     }
 
     private void handleIncomingBye(RequestEvent requestEvent) throws SipException, InvalidArgumentException, ParseException {
@@ -389,18 +558,39 @@ public class SipSignalService implements SipListener {
 
     private InviteBuildResult buildInviteRequest(InviteCommand command)
             throws ParseException, InvalidArgumentException, PeerUnavailableException {
-        String transport = command.transport().toUpperCase();
-        String viaTransport = "TCP".equals(transport) ? ListeningPoint.TCP : ListeningPoint.UDP;
+        TargetDevice target = new TargetDevice(
+                command.deviceId(),
+                command.deviceHost(),
+                command.devicePort(),
+                command.transport()
+        );
+        Request request = createBaseRequest(Request.INVITE, target);
+        request.addHeader(headerFactory.createHeader(
+                "Subject",
+                command.channelId() + ":" + command.ssrc() + "," + appProperties.getGb28181().getServerId() + ":0"
+        ));
 
-        SipURI requestUri = addressFactory.createSipURI(command.deviceId(), command.deviceHost());
-        requestUri.setPort(command.devicePort());
-        requestUri.setTransportParam(viaTransport.toLowerCase());
+        String sdp = buildInviteSdp(command);
+        ContentTypeHeader contentTypeHeader = headerFactory.createContentTypeHeader("APPLICATION", "SDP");
+        request.setContent(sdp, contentTypeHeader);
+
+        CallIdHeader callIdHeader = (CallIdHeader) request.getHeader(CallIdHeader.NAME);
+        return new InviteBuildResult(request, callIdHeader == null ? null : callIdHeader.getCallId());
+    }
+
+    private Request createBaseRequest(String method, TargetDevice target)
+            throws ParseException, InvalidArgumentException, PeerUnavailableException {
+        String transport = normalizeTransport(target.transport());
+
+        SipURI requestUri = addressFactory.createSipURI(target.deviceId(), target.host());
+        requestUri.setPort(target.port());
+        requestUri.setTransportParam(transport.toLowerCase());
 
         SipURI fromUri = addressFactory.createSipURI(appProperties.getGb28181().getServerId(), appProperties.getGb28181().getDomain());
         Address fromAddress = addressFactory.createAddress(fromUri);
         FromHeader fromHeader = headerFactory.createFromHeader(fromAddress, randomTag());
 
-        SipURI toUri = addressFactory.createSipURI(command.deviceId(), appProperties.getGb28181().getDomain());
+        SipURI toUri = addressFactory.createSipURI(target.deviceId(), appProperties.getGb28181().getDomain());
         Address toAddress = addressFactory.createAddress(toUri);
         ToHeader toHeader = headerFactory.createToHeader(toAddress, null);
 
@@ -408,18 +598,18 @@ public class SipSignalService implements SipListener {
         ViaHeader viaHeader = headerFactory.createViaHeader(
                 resolveAnnounceIp(),
                 appProperties.getGb28181().getLocalPort(),
-                viaTransport,
+                transport,
                 null
         );
         viaHeaders.add(viaHeader);
 
         CallIdHeader callIdHeader = sipProvider.getNewCallId();
-        CSeqHeader cSeqHeader = headerFactory.createCSeqHeader(nextCSeq(), Request.INVITE);
+        CSeqHeader cSeqHeader = headerFactory.createCSeqHeader(nextCSeq(), method);
         MaxForwardsHeader maxForwardsHeader = headerFactory.createMaxForwardsHeader(70);
 
         Request request = messageFactory.createRequest(
                 requestUri,
-                Request.INVITE,
+                method,
                 callIdHeader,
                 cSeqHeader,
                 fromHeader,
@@ -434,12 +624,37 @@ public class SipSignalService implements SipListener {
         ContactHeader contactHeader = headerFactory.createContactHeader(contactAddress);
         request.addHeader(contactHeader);
         request.addHeader(headerFactory.createUserAgentHeader(List.of(appProperties.getGb28181().getUserAgent())));
-        request.addHeader(headerFactory.createHeader("Subject", command.channelId() + ":" + command.ssrc() + "," + appProperties.getGb28181().getServerId() + ":0"));
+        return request;
+    }
 
-        String sdp = buildInviteSdp(command);
-        ContentTypeHeader contentTypeHeader = headerFactory.createContentTypeHeader("APPLICATION", "SDP");
-        request.setContent(sdp, contentTypeHeader);
-        return new InviteBuildResult(request, callIdHeader.getCallId());
+    private SipCommandResult sendCommandAndWait(Request request) {
+        CallIdHeader callIdHeader = (CallIdHeader) request.getHeader(CallIdHeader.NAME);
+        String callId = callIdHeader == null ? null : callIdHeader.getCallId();
+        CompletableFuture<SipCommandResult> future = new CompletableFuture<>();
+        if (callId != null) {
+            pendingCommandByCallId.put(callId, future);
+        }
+        try {
+            ClientTransaction clientTransaction = sipProvider.getNewClientTransaction(request);
+            clientTransaction.sendRequest();
+            return future.get(appProperties.getGb28181().getInviteTimeoutMs(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException ex) {
+            if (callId != null) {
+                pendingCommandByCallId.remove(callId);
+            }
+            return SipCommandResult.failed(callId, 408, "等待设备响应超时");
+        } catch (Exception ex) {
+            if (callId != null) {
+                pendingCommandByCallId.remove(callId);
+            }
+            return SipCommandResult.failed(callId, 500, ex.getMessage());
+        }
+    }
+
+    private TargetDevice resolveTargetDevice(String deviceId) {
+        Device device = deviceService.findDeviceByCode(deviceId)
+                .orElseThrow(() -> new IllegalArgumentException("设备不存在: " + deviceId));
+        return new TargetDevice(device.deviceId(), device.ip(), device.port(), device.transport());
     }
 
     private String buildInviteSdp(InviteCommand command) {
@@ -465,14 +680,14 @@ public class SipSignalService implements SipListener {
     }
 
     private Optional<String> extractDeviceIdFromRequest(Request request) {
-        ToHeader toHeader = (ToHeader) request.getHeader(ToHeader.NAME);
-        String fromTo = extractUserPart(toHeader);
-        if (fromTo != null) {
-            return Optional.of(fromTo);
-        }
         FromHeader fromHeader = (FromHeader) request.getHeader(FromHeader.NAME);
         String from = extractUserPart(fromHeader);
-        return Optional.ofNullable(from);
+        if (from != null) {
+            return Optional.of(from);
+        }
+        ToHeader toHeader = (ToHeader) request.getHeader(ToHeader.NAME);
+        String to = extractUserPart(toHeader);
+        return Optional.ofNullable(to);
     }
 
     private String extractUserPart(Header header) {
@@ -499,8 +714,8 @@ public class SipSignalService implements SipListener {
         if (xml == null || xml.isBlank()) {
             return Optional.empty();
         }
-        String regex = XML_TAG_PATTERN.pattern().formatted(tag, tag);
-        Matcher matcher = Pattern.compile(regex, Pattern.CASE_INSENSITIVE).matcher(xml);
+        Pattern pattern = Pattern.compile("<" + tag + ">([\\s\\S]*?)</" + tag + ">", Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(xml);
         if (matcher.find()) {
             return Optional.ofNullable(matcher.group(1)).map(String::trim).filter(s -> !s.isBlank());
         }
@@ -524,6 +739,47 @@ public class SipSignalService implements SipListener {
             return appProperties.getGb28181().getMediaIp();
         }
         return localIp;
+    }
+
+    private String normalizeTransport(String transport) {
+        if ("TCP".equalsIgnoreCase(transport)) {
+            return ListeningPoint.TCP;
+        }
+        return ListeningPoint.UDP;
+    }
+
+    private String normalizeChannelId(String deviceId, String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (deviceId != null && deviceId.equals(normalized)) {
+            return null;
+        }
+        return normalized;
+    }
+
+    private String inferCodec(String xml) {
+        String codec = extractXmlTag(xml, "Codec").orElse(null);
+        if (codec == null) {
+            return null;
+        }
+        String upper = codec.toUpperCase();
+        if (upper.contains("265") || upper.contains("HEVC")) {
+            return "H265";
+        }
+        return "H264";
+    }
+
+    private String normalizeChannelStatus(String status) {
+        if (status == null) {
+            return "OFFLINE";
+        }
+        String value = status.trim().toUpperCase();
+        if ("ON".equals(value) || "ONLINE".equals(value) || "1".equals(value) || "OK".equals(value)) {
+            return "ONLINE";
+        }
+        return "OFFLINE";
     }
 
     private long nextCSeq() {
@@ -575,9 +831,37 @@ public class SipSignalService implements SipListener {
         }
     }
 
+    public record SipCommandResult(
+            boolean success,
+            String callId,
+            int statusCode,
+            String reason,
+            String timestamp
+    ) {
+        public static SipCommandResult success(String callId, int statusCode, String reason) {
+            return new SipCommandResult(true, callId, statusCode, reason, Instant.now().toString());
+        }
+
+        public static SipCommandResult failed(String callId, int statusCode, String reason) {
+            return new SipCommandResult(false, callId, statusCode, reason, Instant.now().toString());
+        }
+
+        public static SipCommandResult skipped(String reason) {
+            return new SipCommandResult(true, null, 0, reason, Instant.now().toString());
+        }
+    }
+
     private record InviteBuildResult(
             Request request,
             String callId
+    ) {
+    }
+
+    private record TargetDevice(
+            String deviceId,
+            String host,
+            int port,
+            String transport
     ) {
     }
 }

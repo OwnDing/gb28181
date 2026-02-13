@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, useNavigate, NavLink } from "react-router";
-import { Video, Monitor, Settings, LogOut } from "lucide-react";
+import { Video, Monitor, Settings, LogOut, Radio } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { authApi } from "../lib/api";
 import { clearToken, getToken } from "../lib/http";
@@ -59,6 +59,7 @@ export default function Layout() {
     { path: "/devices", label: "设备管理", icon: Monitor },
     { path: "/video-preview", label: "在线预览", icon: Video },
     { path: "/storage-settings", label: "存储设置", icon: Settings },
+    { path: "/gb28181", label: "GB28181能力", icon: Radio },
   ];
 
   if (checking) {

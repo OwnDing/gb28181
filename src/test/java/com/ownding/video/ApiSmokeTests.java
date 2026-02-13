@@ -96,6 +96,15 @@ class ApiSmokeTests {
                 .jsonPath("$.data.transport").isEqualTo("TCP")
                 .jsonPath("$.data.preferredCodec").isEqualTo("H265");
 
+        client.post()
+                .uri("/api/gb28181/devices/" + deviceId + "/queries/device-info")
+                .header("Authorization", "Bearer " + token)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(0)
+                .jsonPath("$.data.success").isEqualTo(true);
+
         client.delete()
                 .uri("/api/devices/" + id)
                 .header("Authorization", "Bearer " + token)

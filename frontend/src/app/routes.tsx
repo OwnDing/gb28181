@@ -4,6 +4,7 @@ import Layout from "./pages/layout";
 import DeviceManagement from "./pages/device-management";
 import VideoPreview from "./pages/video-preview";
 import StorageSettings from "./pages/storage-settings";
+import Gb28181Console from "./pages/gb28181-console";
 
 export const router = createBrowserRouter([
   {
@@ -29,6 +30,10 @@ export const router = createBrowserRouter([
       {
         path: "storage-settings",
         Component: StorageSettings,
+      },
+      {
+        path: "gb28181",
+        Component: Gb28181Console,
       },
     ],
   },
