@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: video
+  datasource:
+    url: jdbc:sqlite:./video.db
+    driver-class-name: org.sqlite.JDBC
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+server:
+  port: 8080
+
+logging:
+  level:
+    root: INFO
+
+app:
+  auth:
+    token-expire-hours: 12
+    default-admin-username: admin
+    default-admin-password: admin123
+  zlm:
+    base-url: http://127.0.0.1:8080
+    secret: 4fGoaUIfBZucuLrfyjfftj4rZAEBJkS6
+    public-base-url: http://127.0.0.1:8080
+    default-app: rtp
+  preview:
+    allow-h265-direct-play: true
+    enable-h265-transcode-fallback: false
+  storage:
+    cleanup-interval-seconds: 180
+    cleanup-interval-ms: 180000
+  gb28181:
+    enabled: true
+    local-ip: 0.0.0.0
+    local-port: 5060
+    media-ip: 127.0.0.1
+    server-id: 34020000002000000001
+    domain: 3402000000
+    user-agent: video-gb28181
+    invite-timeout-ms: 8000
+    ssrc-prefix: "0"

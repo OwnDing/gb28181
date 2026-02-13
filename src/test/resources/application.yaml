@@ -1,0 +1,12 @@
+spring:
+  datasource:
+    url: jdbc:sqlite:./video-test.db
+    driver-class-name: org.sqlite.JDBC
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+app:
+  gb28181:
+    enabled: false
