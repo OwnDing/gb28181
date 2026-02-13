@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -89,21 +89,44 @@ export default function DeviceManagement() {
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState<DeviceForm>(DEFAULT_FORM);
+  const loadingRef = useRef(false);
 
-  const loadDevices = useCallback(async () => {
+  const loadDevices = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (loadingRef.current) {
+      return;
+    }
+    loadingRef.current = true;
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       const list = await deviceApi.list();
       setDevices(list);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "设备加载失败");
+      if (!silent) {
+        toast.error(error instanceof Error ? error.message : "设备加载失败");
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
+      loadingRef.current = false;
     }
   }, []);
 
   useEffect(() => {
     loadDevices();
+  }, [loadDevices]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.hidden) {
+        return;
+      }
+      loadDevices({ silent: true });
+    }, 3000);
+    return () => window.clearInterval(timer);
   }, [loadDevices]);
 
   const handleOpenDialog = (device?: Device) => {
@@ -195,7 +218,7 @@ export default function DeviceManagement() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-3xl font-semibold text-slate-900">设备管理</h2>
-          <p className="text-slate-500 mt-1">管理 GB28181 视频设备</p>
+          <p className="text-slate-500 mt-1">管理 GB28181 视频设备（每3秒自动刷新）</p>
         </div>
         <Button onClick={() => handleOpenDialog()}>
           <Plus className="w-4 h-4 mr-2" />
