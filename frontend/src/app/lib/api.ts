@@ -81,6 +81,8 @@ export type PreviewStartResponse = {
   httpFlvUrl: string;
   rtspUrl: string;
   rtmpUrl: string;
+  ssrc?: string | null;
+  sipCallId?: string | null;
   viewerCount: number;
   rtpPort?: number | null;
   created: boolean;

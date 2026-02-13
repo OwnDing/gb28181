@@ -63,6 +63,25 @@ const DEFAULT_FORM: DeviceForm = {
   preferredCodec: "H264",
 };
 
+function validatePayload(payload: DeviceRequest): string | null {
+  if (!/^\d{20}$/.test(payload.deviceId)) {
+    return "设备编码必须是20位数字";
+  }
+  if (!payload.name.trim()) {
+    return "设备名称不能为空";
+  }
+  if (!payload.ip.trim()) {
+    return "IP地址不能为空";
+  }
+  if (!Number.isInteger(payload.port) || payload.port < 1 || payload.port > 65535) {
+    return "端口范围必须在 1-65535 之间";
+  }
+  if (!Number.isInteger(payload.channelCount) || payload.channelCount < 1 || payload.channelCount > 64) {
+    return "通道数范围必须在 1-64 之间";
+  }
+  return null;
+}
+
 export default function DeviceManagement() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
@@ -125,8 +144,13 @@ export default function DeviceManagement() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      setSaving(true);
       const payload = toPayload();
+      const validationError = validatePayload(payload);
+      if (validationError) {
+        toast.error(validationError);
+        return;
+      }
+      setSaving(true);
       if (editingDevice) {
         await deviceApi.update(editingDevice.id, payload);
         toast.success("设备更新成功");
