@@ -23,8 +23,8 @@ app:
     default-admin-password: admin123
   zlm:
     base-url: http://127.0.0.1:8080
-    secret: 4fGoaUIfBZucuLrfyjfftj4rZAEBJkS6
-    public-base-url: http://127.0.0.1:8080
+    secret: ntModmVZiUw6arPbJiiuhfGC7FzNgWLx
+    public-base-url: http://192.168.6.146:8080
     default-app: rtp
   preview:
     allow-h265-direct-play: true
@@ -37,7 +37,7 @@ app:
     auto-register-unknown-device: true
     local-ip: 192.168.6.146
     local-port: 5060
-    media-ip: 127.0.0.1
+    media-ip: 192.168.6.146
     server-id: 34020000002000000001
     domain: 3402000000
     user-agent: video-gb28181
