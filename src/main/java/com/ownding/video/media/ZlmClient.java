@@ -11,9 +11,12 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class ZlmClient {
@@ -68,7 +71,7 @@ public class ZlmClient {
         try {
             webClient.get()
                     .uri(appProperties.getZlm().getBaseUrl()
-                                    + "/index/api/closeRtpServer?secret={secret}&stream_id={streamId}",
+                            + "/index/api/closeRtpServer?secret={secret}&stream_id={streamId}",
                             Map.of("secret", appProperties.getZlm().getSecret(),
                                     "streamId", streamId))
                     .retrieve()
@@ -113,70 +116,179 @@ public class ZlmClient {
     public boolean isMp4Recording(String app, String streamId) {
         try {
             MediaRuntime runtime = queryMediaRuntime(app, streamId);
-            if (runtime != null) {
+            if (runtime != null && runtime.mp4Recording()) {
                 return runtime.mp4Recording();
             }
             Map<String, Object> response = requestRecordControl("/index/api/isRecording", app, streamId, null);
             if (!isSuccess(response)) {
-                return false;
+                return runtime != null && runtime.mp4Recording();
             }
-            return extractRecordingFlag(response);
+            boolean byApi = extractRecordingFlag(response);
+            return byApi || (runtime != null && runtime.mp4Recording());
         } catch (Exception ex) {
-            log.debug("isMp4Recording exception, app={}, streamId={}, err={}", app, streamId, ex.getMessage());
+            log.warn("isMp4Recording exception, app={}, streamId={}, err={}", app, streamId, ex.getMessage());
             return false;
         }
     }
 
     @SuppressWarnings("unchecked")
     public Map<String, MediaRuntime> listMediaRuntimeByApp(String app) {
-        try {
-            Map<String, Object> response = requestMediaList(app, null);
-            if (!isSuccess(response)) {
-                return Map.of();
-            }
-            Object dataObj = response.get("data");
-            Map<String, MediaRuntime> result = new LinkedHashMap<>();
-            if (dataObj instanceof List<?> list) {
-                for (Object item : list) {
-                    if (!(item instanceof Map<?, ?> raw)) {
-                        continue;
-                    }
-                    Map<String, Object> map = (Map<String, Object>) raw;
-                    String stream = firstString(map, "stream");
-                    if (stream == null || stream.isBlank()) {
-                        continue;
-                    }
-                    String runtimeApp = firstString(map, "app");
-                    if (runtimeApp == null || runtimeApp.isBlank()) {
-                        runtimeApp = app;
-                    }
-                    boolean mp4 = asBoolean(map.get("isRecordingMP4"));
-                    MediaRuntime existing = result.get(stream);
-                    if (existing == null) {
-                        result.put(stream, new MediaRuntime(runtimeApp, stream, true, mp4));
-                    } else {
-                        result.put(stream, new MediaRuntime(
-                                existing.app(),
-                                existing.streamId(),
-                                true,
-                                existing.mp4Recording() || mp4
-                        ));
-                    }
-                }
-            }
-            return result;
-        } catch (Exception ex) {
-            log.debug("listMediaRuntimeByApp exception, app={}, err={}", app, ex.getMessage());
-            return Map.of();
-        }
+        return listMediaRuntimeInternal(app, null);
     }
 
     public MediaRuntime queryMediaRuntime(String app, String streamId) {
         if (streamId == null || streamId.isBlank()) {
             return null;
         }
-        Map<String, MediaRuntime> runtimeMap = listMediaRuntimeByApp(app);
-        return runtimeMap.get(streamId);
+        String normalizedStreamId = normalizeStreamId(streamId);
+
+        MediaRuntime runtime = lookupRuntime(listMediaRuntimeInternal(app, streamId), streamId, normalizedStreamId);
+        if (runtime == null && normalizedStreamId != null && !normalizedStreamId.equals(streamId)) {
+            runtime = lookupRuntime(
+                    listMediaRuntimeInternal(app, normalizedStreamId),
+                    streamId,
+                    normalizedStreamId);
+        }
+        if (runtime != null) {
+            return runtime;
+        }
+
+        if (app != null && !app.isBlank()) {
+            runtime = lookupRuntime(listMediaRuntimeInternal(null, streamId), streamId, normalizedStreamId);
+            if (runtime == null && normalizedStreamId != null && !normalizedStreamId.equals(streamId)) {
+                runtime = lookupRuntime(
+                        listMediaRuntimeInternal(null, normalizedStreamId),
+                        streamId,
+                        normalizedStreamId);
+            }
+        }
+        return runtime;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, MediaRuntime> listMediaRuntimeInternal(String app, String streamFilter) {
+        try {
+            Map<String, Object> response = requestMediaList(app, streamFilter);
+            if (!isSuccess(response)) {
+                return Map.of();
+            }
+            Object dataObj = response.get("data");
+            Map<String, MediaRuntime> result = new LinkedHashMap<>();
+            String normalizedFilter = normalizeStreamId(streamFilter);
+            if (dataObj instanceof List<?> list) {
+                for (Object item : list) {
+                    if (!(item instanceof Map<?, ?> raw)) {
+                        continue;
+                    }
+                    Map<String, Object> map = (Map<String, Object>) raw;
+                    List<String> streamCandidates = extractStreamCandidates(map);
+                    if (streamCandidates.isEmpty()) {
+                        continue;
+                    }
+                    if (normalizedFilter != null && streamCandidates.stream().noneMatch(normalizedFilter::equals)) {
+                        continue;
+                    }
+                    String runtimeApp = firstString(map, "app");
+                    if (runtimeApp == null || runtimeApp.isBlank()) {
+                        runtimeApp = app;
+                    }
+                    boolean mp4 = extractMp4RecordingFlag(map);
+                    String primaryStream = streamCandidates.get(0);
+                    for (String candidate : streamCandidates) {
+                        registerRuntime(result, candidate, runtimeApp, primaryStream, mp4);
+                    }
+                }
+            }
+            return result;
+        } catch (Exception ex) {
+            log.warn("listMediaRuntimeInternal exception, app={}, stream={}, err={}",
+                    app, streamFilter, ex.getMessage());
+            return Map.of();
+        }
+    }
+
+    private MediaRuntime lookupRuntime(Map<String, MediaRuntime> runtimeMap, String rawStreamId,
+            String normalizedStreamId) {
+        if (runtimeMap == null || runtimeMap.isEmpty()) {
+            return null;
+        }
+        if (rawStreamId != null) {
+            MediaRuntime byRaw = runtimeMap.get(rawStreamId);
+            if (byRaw != null) {
+                return byRaw;
+            }
+        }
+        if (normalizedStreamId != null) {
+            return runtimeMap.get(normalizedStreamId);
+        }
+        return null;
+    }
+
+    private void registerRuntime(Map<String, MediaRuntime> result, String key, String runtimeApp, String streamId,
+            boolean mp4) {
+        MediaRuntime existing = result.get(key);
+        if (existing == null) {
+            result.put(key, new MediaRuntime(runtimeApp, streamId, true, mp4));
+            return;
+        }
+        result.put(key, new MediaRuntime(
+                existing.app(),
+                existing.streamId(),
+                true,
+                existing.mp4Recording() || mp4));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> extractStreamCandidates(Map<String, Object> map) {
+        Set<String> candidates = new LinkedHashSet<>();
+        String stream = normalizeStreamId(firstString(map, "stream"));
+        if (stream != null) {
+            candidates.add(stream);
+        }
+
+        Object originSockObj = map.get("originSock");
+        if (originSockObj instanceof Map<?, ?> rawSock) {
+            Map<String, Object> originSock = (Map<String, Object>) rawSock;
+            String identifier = normalizeStreamId(firstString(originSock, "identifier"));
+            if (identifier != null) {
+                candidates.add(identifier);
+            }
+        }
+
+        String originUrl = firstString(map, "originUrl");
+        String byOriginUrl = normalizeStreamId(parseStreamFromOriginUrl(originUrl));
+        if (byOriginUrl != null) {
+            candidates.add(byOriginUrl);
+        }
+        return new ArrayList<>(candidates);
+    }
+
+    private String parseStreamFromOriginUrl(String originUrl) {
+        if (originUrl == null || originUrl.isBlank()) {
+            return null;
+        }
+        int queryIndex = originUrl.indexOf('?');
+        String withoutQuery = queryIndex >= 0 ? originUrl.substring(0, queryIndex) : originUrl;
+        int slash = withoutQuery.lastIndexOf('/');
+        if (slash < 0 || slash == withoutQuery.length() - 1) {
+            return null;
+        }
+        return withoutQuery.substring(slash + 1).trim();
+    }
+
+    private String normalizeStreamId(String streamId) {
+        if (streamId == null) {
+            return null;
+        }
+        String trimmed = streamId.trim();
+        if (trimmed.isBlank()) {
+            return null;
+        }
+        String normalized = trimmed.replaceAll("[^A-Za-z0-9_\\-]", "");
+        if (normalized.isBlank()) {
+            return trimmed;
+        }
+        return normalized;
     }
 
     @SuppressWarnings("unchecked")
@@ -202,7 +314,7 @@ public class ZlmClient {
             MediaRuntime runtime = queryMediaRuntime(app, streamId);
             return runtime != null && runtime.streamReady();
         } catch (Exception ex) {
-            log.debug("isStreamReady exception: {}", ex.getMessage());
+            log.warn("isStreamReady exception: {}", ex.getMessage());
             return false;
         }
     }
@@ -415,34 +527,135 @@ public class ZlmClient {
 
     @SuppressWarnings("unchecked")
     private boolean extractRecordingFlag(Map<String, Object> response) {
-        if (response == null) {
+        Boolean extracted = extractRecordingFlagValue(response, 0);
+        return extracted != null && extracted;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Boolean extractRecordingFlagValue(Object value, int depth) {
+        if (value == null || depth > 6) {
+            return null;
+        }
+        if (value instanceof Map<?, ?> raw) {
+            Map<String, Object> map = (Map<String, Object>) raw;
+            Boolean direct = readRecordingFlagFromMap(map);
+            if (direct != null) {
+                return direct;
+            }
+            Boolean nestedFound = null;
+            for (Object child : map.values()) {
+                Boolean nested = extractRecordingFlagValue(child, depth + 1);
+                if (nested == null) {
+                    continue;
+                }
+                if (nested) {
+                    return true;
+                }
+                nestedFound = false;
+            }
+            return nestedFound;
+        }
+        if (value instanceof List<?> list) {
+            Boolean nestedFound = null;
+            for (Object item : list) {
+                Boolean nested = extractRecordingFlagValue(item, depth + 1);
+                if (nested == null) {
+                    continue;
+                }
+                if (nested) {
+                    return true;
+                }
+                nestedFound = false;
+            }
+            return nestedFound;
+        }
+        if (value instanceof Boolean || value instanceof Number || value instanceof CharSequence) {
+            return asBoolean(value);
+        }
+        return null;
+    }
+
+    private boolean extractMp4RecordingFlag(Map<String, Object> map) {
+        Boolean mp4 = readBooleanByKeys(map, "isRecordingMP4", "mp4Recording", "mp4_recording");
+        if (mp4 != null) {
+            return mp4;
+        }
+        Boolean generic = readBooleanByKeys(map, "isRecording", "recording", "status");
+        return generic != null && generic;
+    }
+
+    private Boolean readRecordingFlagFromMap(Map<String, Object> map) {
+        if (map == null || map.isEmpty()) {
+            return null;
+        }
+        Boolean mp4 = readBooleanByKeys(
+                map,
+                "isRecordingMP4",
+                "mp4Recording",
+                "mp4_recording");
+        Boolean generic = readBooleanByKeys(
+                map,
+                "isRecording",
+                "recording",
+                "status");
+        Boolean hls = readBooleanByKeys(
+                map,
+                "isRecordingHLS",
+                "hlsRecording",
+                "hls_recording");
+        if (Boolean.TRUE.equals(mp4) || Boolean.TRUE.equals(generic) || Boolean.TRUE.equals(hls)) {
+            return true;
+        }
+        if (mp4 != null) {
             return false;
         }
-        Object top = response.get("status");
-        if (top != null) {
-            return asBoolean(top);
+        if (generic != null) {
+            return false;
         }
-        Object dataObj = response.get("data");
-        if (dataObj instanceof Map<?, ?> raw) {
-            Map<String, Object> data = (Map<String, Object>) raw;
-            Object nested = data.get("status");
-            if (nested == null) {
-                nested = data.get("recording");
+        if (hls != null) {
+            return false;
+        }
+        return null;
+    }
+
+    private Boolean readBooleanByKeys(Map<String, Object> map, String... keys) {
+        if (map == null || keys == null || keys.length == 0) {
+            return null;
+        }
+        Boolean found = null;
+        for (String key : keys) {
+            Object value = findValueIgnoreCase(map, key);
+            if (value == null) {
+                continue;
             }
-            if (nested == null) {
-                nested = data.get("isRecording");
+            if (asBoolean(value)) {
+                return true;
             }
-            if (nested != null) {
-                return asBoolean(nested);
+            found = false;
+        }
+        return found;
+    }
+
+    private Object findValueIgnoreCase(Map<String, Object> map, String targetKey) {
+        if (map == null || targetKey == null) {
+            return null;
+        }
+        if (map.containsKey(targetKey)) {
+            return map.get(targetKey);
+        }
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            String key = entry.getKey();
+            if (key != null && key.equalsIgnoreCase(targetKey)) {
+                return entry.getValue();
             }
         }
-        if (dataObj != null) {
-            return asBoolean(dataObj);
-        }
-        return false;
+        return null;
     }
 
     private boolean asBoolean(Object value) {
+        if (value == null) {
+            return false;
+        }
         if (value instanceof Boolean bool) {
             return bool;
         }

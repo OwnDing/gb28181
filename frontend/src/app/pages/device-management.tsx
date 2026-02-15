@@ -110,7 +110,7 @@ function buildRecordingSummary(
     if (item.recording) {
       current.recordingChannels += 1;
     }
-    if (item.streamReady && !item.recording) {
+    if ((item.streamReady || item.sessionActive) && !item.recording) {
       current.streamOnlineNotRecordingChannels += 1;
     }
     if (current.recordingChannels > 0) {

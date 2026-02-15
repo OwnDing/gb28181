@@ -169,7 +169,8 @@ public class PreviewService {
             String detectedCodec = normalizeCodec(zlmClient.detectStreamCodec(app, streamId));
             String finalCodec = detectedCodec == null ? codec : detectedCodec;
             if (!finalCodec.equals(codec)) {
-                log.info("channel codec corrected by stream probe. deviceId={}, channelId={}, dbCodec={}, streamCodec={}",
+                log.info(
+                        "channel codec corrected by stream probe. deviceId={}, channelId={}, dbCodec={}, streamCodec={}",
                         device.deviceId(), channel.channelId(), codec, finalCodec);
                 deviceService.updateChannelCodec(device.id(), channel.channelId(), finalCodec);
             }
@@ -188,7 +189,8 @@ public class PreviewService {
 
             if (recordingConfig.enabled()) {
                 boolean recordingStarted = zlmClient.startMp4Record(app, streamId, recordingConfig.zlmRecordPath());
-                boolean recordingActive = recordingStarted && waitRecordingStarted(app, streamId, Duration.ofSeconds(3));
+                boolean recordingActive = recordingStarted
+                        && waitRecordingStarted(app, streamId, Duration.ofSeconds(3));
                 if (!recordingActive) {
                     sipSignalService.bye(inviteResult.callId());
                     zlmClient.closeRtpServer(streamId);
@@ -245,8 +247,10 @@ public class PreviewService {
                 DeviceChannel channel = deviceService.resolveChannel(devicePk, channelId);
                 RecordingConfig recordingConfig = resolveRecordingConfig(storageService.getPolicy(), device, channel);
                 if (recordingConfig.enabled()) {
-                    boolean started = zlmClient.startMp4Record(existing.app, existing.streamId, recordingConfig.zlmRecordPath());
-                    boolean active = started && waitRecordingStarted(existing.app, existing.streamId, Duration.ofSeconds(3));
+                    boolean started = zlmClient.startMp4Record(existing.app, existing.streamId,
+                            recordingConfig.zlmRecordPath());
+                    boolean active = started
+                            && waitRecordingStarted(existing.app, existing.streamId, Duration.ofSeconds(3));
                     if (!active) {
                         throw new ApiException(502, "后台补开录像失败");
                     }
@@ -263,8 +267,7 @@ public class PreviewService {
                 devicePk,
                 channelId,
                 "WEBRTC",
-                true
-        ));
+                true));
         synchronized (this) {
             SessionHolder holder = sessionById.get(result.sessionId());
             if (holder == null) {
@@ -338,11 +341,9 @@ public class PreviewService {
         if (holder != null) {
             ZlmClient.MediaRuntime mediaRuntime = zlmClient.queryMediaRuntime(holder.app, holder.streamId);
             boolean streamReady = mediaRuntime != null && mediaRuntime.streamReady();
-            boolean recording = holder.recordingEnabled && (
-                    mediaRuntime != null
-                            ? mediaRuntime.mp4Recording()
-                            : zlmClient.isMp4Recording(holder.app, holder.streamId)
-            );
+            boolean recording = holder.recordingEnabled && (mediaRuntime != null
+                    ? mediaRuntime.mp4Recording()
+                    : zlmClient.isMp4Recording(holder.app, holder.streamId));
             return Optional.of(new ChannelRuntime(
                     holder.devicePk,
                     holder.deviceId,
@@ -355,11 +356,11 @@ public class PreviewService {
                     holder.backgroundPinned,
                     holder.viewerCount.get(),
                     holder.startedAt,
-                    holder.updatedAt
-            ));
+                    holder.updatedAt));
         }
 
-        // Fallback probe: process restarted or session not tracked in memory, but stream
+        // Fallback probe: process restarted or session not tracked in memory, but
+        // stream
         // may still be alive and recording in ZLMediaKit.
         String app = appProperties.getZlm().getDefaultApp();
         String expectedStreamId = buildStreamId(channelId);
@@ -381,8 +382,33 @@ public class PreviewService {
                 false,
                 0,
                 null,
-                null
-        ));
+                null));
+    }
+
+    /**
+     * Lightweight session lookup — reads only from the in-memory session map,
+     * NO HTTP calls to ZLMediaKit. Used by
+     * BackgroundRecordingScheduler.listStatuses()
+     * to avoid redundant per-channel HTTP calls.
+     */
+    public ChannelRuntime findChannelRuntimeLocal(long devicePk, String channelId) {
+        SessionHolder holder = sessionByKey.get(buildSessionKey(devicePk, channelId));
+        if (holder == null) {
+            return null;
+        }
+        return new ChannelRuntime(
+                holder.devicePk,
+                holder.deviceId,
+                holder.channelId,
+                holder.app,
+                holder.streamId,
+                holder.recordingEnabled,
+                holder.recordingEnabled,
+                false,
+                holder.backgroundPinned,
+                holder.viewerCount.get(),
+                holder.startedAt,
+                holder.updatedAt);
     }
 
     public WebRtcAnswer playWebRtc(String sessionId, String offerSdp) {
@@ -615,12 +641,15 @@ public class PreviewService {
     private String resolvePreferredMediaIp(String deviceIp, String configuredMediaIp, String contactHost) {
         List<String> localIps = listLocalIpv4Addresses();
 
-        // When a device simulator runs on the same Windows host, it may bind RTP sockets to the
-        // Contact IP (e.g. VPN adapter). In this case, sending RTP to another local subnet can fail.
+        // When a device simulator runs on the same Windows host, it may bind RTP
+        // sockets to the
+        // Contact IP (e.g. VPN adapter). In this case, sending RTP to another local
+        // subnet can fail.
         if (contactHost != null && !contactHost.isBlank()) {
             String trimmedContactHost = contactHost.trim();
             if (localIps.contains(trimmedContactHost)) {
-                log.info("use mediaIp={} because device Contact host is a local address. deviceIp={}, configuredMediaIp={}",
+                log.info(
+                        "use mediaIp={} because device Contact host is a local address. deviceIp={}, configuredMediaIp={}",
                         trimmedContactHost, deviceIp, configuredMediaIp);
                 return trimmedContactHost;
             }
