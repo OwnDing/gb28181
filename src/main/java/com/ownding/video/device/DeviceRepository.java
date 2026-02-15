@@ -306,7 +306,7 @@ public class DeviceRepository {
                 .update();
         String now = Instant.now().toString();
         for (int i = 1; i <= channelCount; i++) {
-            String channelId = generateDefaultChannelId(deviceCode, i);
+            String channelId = generateDefaultChannelId(deviceCode, i, channelCount);
             jdbcClient.sql("""
                             INSERT INTO gb_channel (device_pk, channel_no, channel_id, name, codec, status, created_at, updated_at)
                             VALUES (:devicePk, :channelNo, :channelId, :name, :codec, 'OFFLINE', :now, :now)
@@ -321,7 +321,12 @@ public class DeviceRepository {
         }
     }
 
-    private String generateDefaultChannelId(String deviceCode, int channelNo) {
+    private String generateDefaultChannelId(String deviceCode, int channelNo, int channelCount) {
+        if (channelCount == 1 && deviceCode != null && deviceCode.matches("\\d{20}")) {
+            // Single-channel devices commonly use deviceId as channelId.
+            // This also avoids collisions for IDs sharing the same first 17 digits.
+            return deviceCode;
+        }
         if (deviceCode != null && deviceCode.matches("\\d{20}")) {
             return deviceCode.substring(0, 17) + String.format("%03d", channelNo);
         }
