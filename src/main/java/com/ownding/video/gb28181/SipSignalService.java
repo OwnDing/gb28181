@@ -41,6 +41,7 @@ import javax.sip.header.FromHeader;
 import javax.sip.header.Header;
 import javax.sip.header.HeaderFactory;
 import javax.sip.header.MaxForwardsHeader;
+import javax.sip.header.RouteHeader;
 import javax.sip.header.ToHeader;
 import javax.sip.header.UserAgentHeader;
 import javax.sip.header.ViaHeader;
@@ -59,6 +60,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -67,16 +69,20 @@ import java.util.regex.Pattern;
 public class SipSignalService implements SipListener {
 
     private static final Logger log = LoggerFactory.getLogger(SipSignalService.class);
-    private static final Pattern ITEM_BLOCK_PATTERN = Pattern.compile("<Item>([\\s\\S]*?)</Item>", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ITEM_BLOCK_PATTERN = Pattern.compile("<Item>([\\s\\S]*?)</Item>",
+            Pattern.CASE_INSENSITIVE);
 
     private final AppProperties appProperties;
     private final DeviceService deviceService;
     private final Gb28181Repository gb28181Repository;
 
     private final AtomicLong cSeq = new AtomicLong(System.currentTimeMillis() % 100000000L);
+    private final AtomicInteger ssrcSeq = new AtomicInteger();
     private final ConcurrentHashMap<String, CompletableFuture<InviteResult>> pendingInviteByCallId = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<SipCommandResult>> pendingCommandByCallId = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Dialog> dialogByCallId = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, DeviceEndpoint> endpointByCallId = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> contactHostByDeviceId = new ConcurrentHashMap<>();
 
     private volatile SipFactory sipFactory;
     private volatile SipStack sipStack;
@@ -85,7 +91,8 @@ public class SipSignalService implements SipListener {
     private volatile HeaderFactory headerFactory;
     private volatile MessageFactory messageFactory;
 
-    public SipSignalService(AppProperties appProperties, DeviceService deviceService, Gb28181Repository gb28181Repository) {
+    public SipSignalService(AppProperties appProperties, DeviceService deviceService,
+            Gb28181Repository gb28181Repository) {
         this.appProperties = appProperties;
         this.deviceService = deviceService;
         this.gb28181Repository = gb28181Repository;
@@ -115,15 +122,23 @@ public class SipSignalService implements SipListener {
             ListeningPoint udpPoint = this.sipStack.createListeningPoint(
                     appProperties.getGb28181().getLocalIp(),
                     appProperties.getGb28181().getLocalPort(),
-                    ListeningPoint.UDP
-            );
+                    ListeningPoint.UDP);
             this.sipProvider = this.sipStack.createSipProvider(udpPoint);
+            try {
+                ListeningPoint tcpPoint = this.sipStack.createListeningPoint(
+                        appProperties.getGb28181().getLocalIp(),
+                        appProperties.getGb28181().getLocalPort(),
+                        ListeningPoint.TCP);
+                this.sipProvider.addListeningPoint(tcpPoint);
+            } catch (Exception ex) {
+                log.warn("GB28181 SIP TCP listening point init failed, fallback to UDP only: {}", ex.getMessage());
+            }
             this.sipProvider.addSipListener(this);
             log.info(
-                    "GB28181 SIP started on {}:{}",
+                    "GB28181 SIP started on {}:{}, transports={}",
                     appProperties.getGb28181().getLocalIp(),
-                    appProperties.getGb28181().getLocalPort()
-            );
+                    appProperties.getGb28181().getLocalPort(),
+                    String.join(",", availableSipTransports()));
         } catch (Exception ex) {
             log.error("Failed to initialize GB28181 SIP stack: {}", ex.getMessage(), ex);
             destroy();
@@ -132,14 +147,15 @@ public class SipSignalService implements SipListener {
 
     @PreDestroy
     public void destroy() {
-        pendingInviteByCallId.forEach((callId, future) ->
-                future.complete(InviteResult.failed(callId, 500, "SIP服务关闭")));
+        pendingInviteByCallId.forEach((callId, future) -> future.complete(InviteResult.failed(callId, 500, "SIP服务关闭")));
         pendingInviteByCallId.clear();
 
-        pendingCommandByCallId.forEach((callId, future) ->
-                future.complete(SipCommandResult.failed(callId, 500, "SIP服务关闭")));
+        pendingCommandByCallId
+                .forEach((callId, future) -> future.complete(SipCommandResult.failed(callId, 500, "SIP服务关闭")));
         pendingCommandByCallId.clear();
         dialogByCallId.clear();
+        endpointByCallId.clear();
+        contactHostByDeviceId.clear();
 
         if (sipProvider != null) {
             try {
@@ -179,19 +195,48 @@ public class SipSignalService implements SipListener {
         }
         ensureSipReady();
 
+        String sdpProtocol = command.streamMode() == 0 ? "RTP/AVP" : "TCP/RTP/AVP";
+        log.info(
+                "send INVITE: deviceId={}, deviceHost={}, devicePort={}, channelId={}, sipTransport={}, streamMode={}, sdpProtocol={}, mediaIp={}, rtpPort={}, ssrc={}, streamId={}",
+                command.deviceId(),
+                command.deviceHost(),
+                command.devicePort(),
+                command.channelId(),
+                command.sipTransport(),
+                command.streamMode(),
+                sdpProtocol,
+                resolveInviteMediaIp(command.announcedMediaIp()),
+                command.rtpPort(),
+                command.ssrc(),
+                command.streamId());
+
+        String callId = null;
         try {
             InviteBuildResult built = buildInviteRequest(command);
+            callId = built.callId();
+            if (callId == null || callId.isBlank()) {
+                return InviteResult.failed(null, 500, "INVITE创建失败: callId为空");
+            }
             CompletableFuture<InviteResult> future = new CompletableFuture<>();
-            pendingInviteByCallId.put(built.callId(), future);
+            pendingInviteByCallId.put(callId, future);
+            endpointByCallId.put(callId, inferEndpointFromRequest(built.request(), command));
 
             ClientTransaction clientTransaction = sipProvider.getNewClientTransaction(built.request());
             clientTransaction.sendRequest();
 
             return future.get(appProperties.getGb28181().getInviteTimeoutMs(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException ex) {
-            return InviteResult.failed(null, 408, "INVITE等待超时");
+            if (callId != null) {
+                pendingInviteByCallId.remove(callId);
+                endpointByCallId.remove(callId);
+            }
+            return InviteResult.failed(callId, 408, "INVITE等待超时");
         } catch (Exception ex) {
-            return InviteResult.failed(null, 500, "INVITE发送失败: " + ex.getMessage());
+            if (callId != null) {
+                pendingInviteByCallId.remove(callId);
+                endpointByCallId.remove(callId);
+            }
+            return InviteResult.failed(callId, 500, "INVITE发送失败: " + ex.getMessage());
         }
     }
 
@@ -203,6 +248,7 @@ public class SipSignalService implements SipListener {
             return;
         }
         Dialog dialog = dialogByCallId.remove(callId);
+        DeviceEndpoint endpoint = endpointByCallId.remove(callId);
         if (dialog == null) {
             return;
         }
@@ -211,8 +257,15 @@ public class SipSignalService implements SipListener {
         }
         try {
             Request byeRequest = dialog.createRequest(Request.BYE);
+            overrideDialogRequestUriIfNeeded(callId, byeRequest, endpoint);
             ClientTransaction transaction = sipProvider.getNewClientTransaction(byeRequest);
-            dialog.sendRequest(transaction);
+            try {
+                dialog.sendRequest(transaction);
+            } catch (Exception ex) {
+                log.warn("dialog send BYE failed, fallback to stateless. callId={}, reason={}", callId,
+                        ex.getMessage());
+                sipProvider.sendRequest(byeRequest);
+            }
         } catch (Exception ex) {
             log.warn("Send BYE failed for callId={}, reason={}", callId, ex.getMessage());
         }
@@ -264,7 +317,8 @@ public class SipSignalService implements SipListener {
                 handleRegister(requestEvent);
             } else if (Request.MESSAGE.equals(method)) {
                 handleMessage(requestEvent);
-            } else if (Request.NOTIFY.equals(method) || Request.OPTIONS.equals(method) || Request.SUBSCRIBE.equals(method)) {
+            } else if (Request.NOTIFY.equals(method) || Request.OPTIONS.equals(method)
+                    || Request.SUBSCRIBE.equals(method)) {
                 sendResponse(requestEvent, Response.OK);
             } else if (Request.BYE.equals(method)) {
                 handleIncomingBye(requestEvent);
@@ -311,20 +365,26 @@ public class SipSignalService implements SipListener {
                 if (dialog == null && responseEvent.getClientTransaction() != null) {
                     dialog = responseEvent.getClientTransaction().getDialog();
                 }
+                boolean ackSent = false;
                 if (dialog != null) {
-                    try {
-                        Request ack = dialog.createAck(cSeqHeader.getSeqNumber());
-                        dialog.sendAck(ack);
+                    ackSent = sendAckForInvite(callId, responseEvent, dialog, cSeqHeader.getSeqNumber());
+                    if (ackSent) {
                         dialogByCallId.put(callId, dialog);
-                    } catch (Exception ex) {
-                        log.warn("Send ACK failed, callId={}, reason={}", callId, ex.getMessage());
                     }
                 }
+                if (!ackSent) {
+                    endpointByCallId.remove(callId);
+                    future.complete(InviteResult.failed(callId, 500, "INVITE成功但ACK发送失败"));
+                    pendingInviteByCallId.remove(callId);
+                    return;
+                }
+
                 future.complete(InviteResult.success(callId, statusCode, response.getReasonPhrase()));
                 pendingInviteByCallId.remove(callId);
                 return;
             }
 
+            endpointByCallId.remove(callId);
             future.complete(InviteResult.failed(callId, statusCode, response.getReasonPhrase()));
             pendingInviteByCallId.remove(callId);
             return;
@@ -346,6 +406,7 @@ public class SipSignalService implements SipListener {
 
         if (Request.BYE.equals(method) && statusCode >= 200 && statusCode < 300) {
             dialogByCallId.remove(callId);
+            endpointByCallId.remove(callId);
         }
     }
 
@@ -365,12 +426,148 @@ public class SipSignalService implements SipListener {
         CompletableFuture<InviteResult> inviteFuture = pendingInviteByCallId.remove(callId);
         if (inviteFuture != null) {
             inviteFuture.complete(InviteResult.failed(callId, 408, "SIP事务超时"));
+            endpointByCallId.remove(callId);
             return;
         }
         CompletableFuture<SipCommandResult> commandFuture = pendingCommandByCallId.remove(callId);
         if (commandFuture != null) {
             commandFuture.complete(SipCommandResult.failed(callId, 408, "SIP事务超时"));
         }
+    }
+
+    private boolean sendAckForInvite(String callId, ResponseEvent responseEvent, Dialog dialog, long inviteCSeq) {
+        Request ack;
+        try {
+            ack = dialog.createAck(inviteCSeq);
+        } catch (Exception ex) {
+            log.warn("Create ACK failed, callId={}, reason={}", callId, ex.getMessage());
+            return false;
+        }
+
+        overrideDialogRequestUriIfNeeded(callId, ack, endpointByCallId.get(callId), responseEvent);
+
+        Header routeHeader = ack.getHeader(RouteHeader.NAME);
+        log.info("send ACK: callId={}, uri={}, route={}", callId, ack.getRequestURI(), routeHeader);
+
+        try {
+            dialog.sendAck(ack);
+            return true;
+        } catch (Exception ex) {
+            log.warn("Send ACK failed, callId={}, reason={}, fallback=stateless", callId, ex.getMessage());
+            try {
+                sipProvider.sendRequest(ack);
+                return true;
+            } catch (Exception fallbackEx) {
+                log.warn("Send ACK fallback failed, callId={}, reason={}", callId, fallbackEx.getMessage());
+                return false;
+            }
+        }
+    }
+
+    private DeviceEndpoint inferEndpointFromRequest(Request request, InviteCommand command) {
+        if (request == null) {
+            return new DeviceEndpoint(command.deviceHost(), command.devicePort(),
+                    normalizeDeviceTransport(command.sipTransport()));
+        }
+
+        RouteHeader routeHeader = (RouteHeader) request.getHeader(RouteHeader.NAME);
+        if (routeHeader != null && routeHeader.getAddress() != null
+                && routeHeader.getAddress().getURI() instanceof SipURI routeUri) {
+            String host = routeUri.getHost();
+            int port = routeUri.getPort() > 0 ? routeUri.getPort() : command.devicePort();
+            String transport = firstNonBlank(routeUri.getTransportParam(), command.sipTransport());
+            if (host != null && !host.isBlank()) {
+                return new DeviceEndpoint(host, port, normalizeDeviceTransport(transport));
+            }
+        }
+
+        if (request.getRequestURI() instanceof SipURI uri) {
+            String host = uri.getHost();
+            int port = uri.getPort() > 0 ? uri.getPort() : command.devicePort();
+            String transport = firstNonBlank(uri.getTransportParam(), command.sipTransport());
+            if (host != null && !host.isBlank()) {
+                return new DeviceEndpoint(host, port, normalizeDeviceTransport(transport));
+            }
+        }
+        return new DeviceEndpoint(command.deviceHost(), command.devicePort(),
+                normalizeDeviceTransport(command.sipTransport()));
+    }
+
+    private void overrideDialogRequestUriIfNeeded(String callId, Request request, DeviceEndpoint endpoint) {
+        overrideDialogRequestUriIfNeeded(callId, request, endpoint, null);
+    }
+
+    private void overrideDialogRequestUriIfNeeded(String callId, Request request, DeviceEndpoint endpoint,
+            ResponseEvent responseEvent) {
+        if (request == null) {
+            return;
+        }
+        if (!(request.getRequestURI() instanceof SipURI currentUri)) {
+            return;
+        }
+        if (!shouldOverrideSipHost(currentUri.getHost())) {
+            return;
+        }
+
+        SipURI fallbackUri = extractRequestUriFromTransaction(responseEvent);
+        if (fallbackUri != null && !shouldOverrideSipHost(fallbackUri.getHost())) {
+            request.setRequestURI(fallbackUri);
+            log.debug("override dialog request-uri by transaction uri. callId={}, method={}, uri={}", callId,
+                    request.getMethod(), fallbackUri);
+            return;
+        }
+
+        if (endpoint == null || endpoint.host() == null || endpoint.host().isBlank()) {
+            return;
+        }
+        try {
+            SipURI uri = addressFactory.createSipURI(currentUri.getUser(), endpoint.host());
+            if (endpoint.port() > 0) {
+                uri.setPort(endpoint.port());
+            }
+            if (endpoint.transport() != null && !endpoint.transport().isBlank()) {
+                uri.setTransportParam(endpoint.transport().toLowerCase());
+            }
+            request.setRequestURI(uri);
+            log.debug("override dialog request-uri by endpoint. callId={}, method={}, uri={}", callId,
+                    request.getMethod(), uri);
+        } catch (Exception ex) {
+            log.debug("override dialog request-uri failed. callId={}, reason={}", callId, ex.getMessage());
+        }
+    }
+
+    private SipURI extractRequestUriFromTransaction(ResponseEvent responseEvent) {
+        if (responseEvent == null) {
+            return null;
+        }
+        ClientTransaction transaction = responseEvent.getClientTransaction();
+        if (transaction == null) {
+            return null;
+        }
+        Request request = transaction.getRequest();
+        if (request == null) {
+            return null;
+        }
+        if (!(request.getRequestURI() instanceof SipURI uri)) {
+            return null;
+        }
+        try {
+            return (SipURI) uri.clone();
+        } catch (Exception ex) {
+            return uri;
+        }
+    }
+
+    private boolean shouldOverrideSipHost(String host) {
+        if (host == null || host.isBlank()) {
+            return true;
+        }
+        String trimmed = host.trim();
+        String domain = appProperties.getGb28181().getDomain();
+        if (domain != null && !domain.isBlank() && trimmed.equalsIgnoreCase(domain.trim())) {
+            return true;
+        }
+        return trimmed.matches("\\d{10,}");
     }
 
     @Override
@@ -391,7 +588,8 @@ public class SipSignalService implements SipListener {
         }
     }
 
-    private void handleRegister(RequestEvent requestEvent) throws SipException, InvalidArgumentException, ParseException {
+    private void handleRegister(RequestEvent requestEvent)
+            throws SipException, InvalidArgumentException, ParseException {
         Request request = requestEvent.getRequest();
         String deviceId = extractDeviceIdFromRequest(request).orElse(null);
         boolean online = true;
@@ -400,14 +598,17 @@ public class SipSignalService implements SipListener {
             online = false;
         }
 
-        // Respond first to avoid device-side REGISTER timeout caused by local DB processing latency.
+        // Respond first to avoid device-side REGISTER timeout caused by local DB
+        // processing latency.
         sendResponse(requestEvent, Response.OK);
         if (deviceId != null) {
+            updateContactHostIfPresent(deviceId, request);
             updateDeviceOnlineState(deviceId, online, request, "REGISTER");
         }
     }
 
-    private void handleMessage(RequestEvent requestEvent) throws SipException, InvalidArgumentException, ParseException {
+    private void handleMessage(RequestEvent requestEvent)
+            throws SipException, InvalidArgumentException, ParseException {
         Request request = requestEvent.getRequest();
         String body = getRequestBody(request);
         String cmdType = extractXmlTag(body, "CmdType").orElse(null);
@@ -415,6 +616,9 @@ public class SipSignalService implements SipListener {
         String xmlDeviceId = extractXmlTag(body, "DeviceID").orElse(null);
         String deviceId = fromDeviceId == null || fromDeviceId.isBlank() ? xmlDeviceId : fromDeviceId;
 
+        if (deviceId != null) {
+            updateContactHostIfPresent(deviceId, request);
+        }
         if (deviceId != null && cmdType != null) {
             if ("Keepalive".equalsIgnoreCase(cmdType)) {
                 updateDeviceOnlineState(deviceId, true, request, "Keepalive");
@@ -431,6 +635,31 @@ public class SipSignalService implements SipListener {
             }
         }
         sendResponse(requestEvent, Response.OK);
+    }
+
+    public Optional<String> getLastContactHost(String deviceId) {
+        if (deviceId == null || deviceId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(contactHostByDeviceId.get(deviceId));
+    }
+
+    private void updateContactHostIfPresent(String deviceId, Request request) {
+        if (deviceId == null || deviceId.isBlank() || request == null) {
+            return;
+        }
+        ContactHeader contactHeader = (ContactHeader) request.getHeader(ContactHeader.NAME);
+        if (contactHeader == null || contactHeader.getAddress() == null) {
+            return;
+        }
+        if (!(contactHeader.getAddress().getURI() instanceof SipURI contactUri)) {
+            return;
+        }
+        String host = contactUri.getHost();
+        if (host == null || host.isBlank()) {
+            return;
+        }
+        contactHostByDeviceId.put(deviceId, host.trim());
     }
 
     private void updateDeviceOnlineState(String deviceId, boolean online, Request request, String source) {
@@ -467,16 +696,14 @@ public class SipSignalService implements SipListener {
                     null,
                     "AUTO",
                     1,
-                    "H264"
-            ));
+                    "H264"));
             boolean updated = deviceService.updateDeviceOnlineStatusByCode(deviceId, true);
             log.info(
                     "auto-registered GB28181 device deviceId={}, host={}, port={}, transport={}",
                     deviceId,
                     endpoint.host(),
                     endpoint.port(),
-                    endpoint.transport()
-            );
+                    endpoint.transport());
             return updated;
         } catch (Exception ex) {
             log.warn("auto register device failed, deviceId={}, reason={}", deviceId, ex.getMessage());
@@ -547,8 +774,7 @@ public class SipSignalService implements SipListener {
                 extractXmlTag(xml, "Model").orElse(null),
                 extractXmlTag(xml, "Firmware").orElse(null),
                 extractXmlTag(xml, "Result").or(() -> extractXmlTag(xml, "Status")).orElse(null),
-                xml
-        ));
+                xml));
     }
 
     private void persistCatalog(String deviceId, String xml) {
@@ -564,8 +790,7 @@ public class SipSignalService implements SipListener {
                     channelId,
                     extractXmlTag(block, "Name").orElse(channelId),
                     inferCodec(block),
-                    normalizeChannelStatus(extractXmlTag(block, "Status").orElse("OFFLINE"))
-            ));
+                    normalizeChannelStatus(extractXmlTag(block, "Status").orElse("OFFLINE"))));
         }
         if (!items.isEmpty()) {
             gb28181Repository.syncCatalog(deviceId, items);
@@ -581,8 +806,7 @@ public class SipSignalService implements SipListener {
             String block = matcher.group(1);
             String itemChannelId = normalizeChannelId(
                     deviceId,
-                    extractXmlTag(block, "DeviceID").orElse(defaultChannelId)
-            );
+                    extractXmlTag(block, "DeviceID").orElse(defaultChannelId));
             items.add(new Gb28181Repository.UpsertRecordItemCommand(
                     itemChannelId,
                     extractXmlTag(block, "RecordID").orElse(null),
@@ -594,8 +818,7 @@ public class SipSignalService implements SipListener {
                     extractXmlTag(block, "Type").orElse(null),
                     extractXmlTag(block, "RecorderID").orElse(null),
                     extractXmlTag(block, "FilePath").or(() -> extractXmlTag(block, "FileName")).orElse(null),
-                    block
-            ));
+                    block));
         }
         if (!items.isEmpty()) {
             gb28181Repository.replaceRecordItems(deviceId, defaultChannelId, items);
@@ -615,8 +838,7 @@ public class SipSignalService implements SipListener {
                 extractXmlTag(xml, "Longitude").orElse(null),
                 extractXmlTag(xml, "Latitude").orElse(null),
                 extractXmlTag(xml, "AlarmDescription").or(() -> extractXmlTag(xml, "Description")).orElse(null),
-                xml
-        ));
+                xml));
     }
 
     private void persistMobilePosition(String deviceId, String xml) {
@@ -631,15 +853,17 @@ public class SipSignalService implements SipListener {
                 extractXmlTag(xml, "Speed").orElse(null),
                 extractXmlTag(xml, "Direction").orElse(null),
                 extractXmlTag(xml, "Altitude").orElse(null),
-                xml
-        ));
+                xml));
     }
 
-    private void handleIncomingBye(RequestEvent requestEvent) throws SipException, InvalidArgumentException, ParseException {
+    private void handleIncomingBye(RequestEvent requestEvent)
+            throws SipException, InvalidArgumentException, ParseException {
         Request request = requestEvent.getRequest();
         CallIdHeader callIdHeader = (CallIdHeader) request.getHeader(CallIdHeader.NAME);
         if (callIdHeader != null) {
-            dialogByCallId.remove(callIdHeader.getCallId());
+            String callId = callIdHeader.getCallId();
+            dialogByCallId.remove(callId);
+            endpointByCallId.remove(callId);
         }
         sendResponse(requestEvent, Response.OK);
     }
@@ -648,7 +872,8 @@ public class SipSignalService implements SipListener {
             throws ParseException, InvalidArgumentException, SipException {
         Request request = requestEvent.getRequest();
         Response response = messageFactory.createResponse(statusCode, request);
-        UserAgentHeader userAgentHeader = headerFactory.createUserAgentHeader(List.of(appProperties.getGb28181().getUserAgent()));
+        UserAgentHeader userAgentHeader = headerFactory
+                .createUserAgentHeader(List.of(appProperties.getGb28181().getUserAgent()));
         response.setHeader(userAgentHeader);
 
         ServerTransaction serverTransaction = requestEvent.getServerTransaction();
@@ -663,26 +888,26 @@ public class SipSignalService implements SipListener {
             serverTransaction.sendResponse(response);
             return;
         }
-        // Stateless fallback: improves compatibility for retransmitted UDP REGISTER/MESSAGE requests.
+        // Stateless fallback: improves compatibility for retransmitted UDP
+        // REGISTER/MESSAGE requests.
         sipProvider.sendResponse(response);
     }
 
     private InviteBuildResult buildInviteRequest(InviteCommand command)
             throws ParseException, InvalidArgumentException, PeerUnavailableException {
         TargetDevice target = new TargetDevice(
-                command.deviceId(),
+                command.channelId(),
                 command.deviceHost(),
                 command.devicePort(),
-                command.transport()
-        );
+                command.sipTransport());
         Request request = createBaseRequest(Request.INVITE, target);
+        String subjectStreamId = firstNonBlank(command.streamId(), command.ssrc());
         request.addHeader(headerFactory.createHeader(
                 "Subject",
-                command.channelId() + ":" + command.ssrc() + "," + appProperties.getGb28181().getServerId() + ":0"
-        ));
+                command.channelId() + ":" + subjectStreamId + "," + command.deviceId() + ":" + subjectStreamId));
 
         String sdp = buildInviteSdp(command);
-        ContentTypeHeader contentTypeHeader = headerFactory.createContentTypeHeader("APPLICATION", "SDP");
+        ContentTypeHeader contentTypeHeader = headerFactory.createContentTypeHeader("Application", "SDP");
         request.setContent(sdp, contentTypeHeader);
 
         CallIdHeader callIdHeader = (CallIdHeader) request.getHeader(CallIdHeader.NAME);
@@ -691,13 +916,12 @@ public class SipSignalService implements SipListener {
 
     private Request createBaseRequest(String method, TargetDevice target)
             throws ParseException, InvalidArgumentException, PeerUnavailableException {
-        String transport = normalizeTransport(target.transport());
+        String transport = resolveSipTransport(target.transport());
 
-        SipURI requestUri = addressFactory.createSipURI(target.deviceId(), target.host());
-        requestUri.setPort(target.port());
-        requestUri.setTransportParam(transport.toLowerCase());
+        SipURI requestUri = addressFactory.createSipURI(target.deviceId(), appProperties.getGb28181().getDomain());
 
-        SipURI fromUri = addressFactory.createSipURI(appProperties.getGb28181().getServerId(), appProperties.getGb28181().getDomain());
+        SipURI fromUri = addressFactory.createSipURI(appProperties.getGb28181().getServerId(),
+                appProperties.getGb28181().getDomain());
         Address fromAddress = addressFactory.createAddress(fromUri);
         FromHeader fromHeader = headerFactory.createFromHeader(fromAddress, randomTag());
 
@@ -710,8 +934,7 @@ public class SipSignalService implements SipListener {
                 resolveAnnounceIp(),
                 appProperties.getGb28181().getLocalPort(),
                 transport,
-                null
-        );
+                null);
         viaHeaders.add(viaHeader);
 
         CallIdHeader callIdHeader = sipProvider.getNewCallId();
@@ -726,8 +949,15 @@ public class SipSignalService implements SipListener {
                 fromHeader,
                 toHeader,
                 viaHeaders,
-                maxForwardsHeader
-        );
+                maxForwardsHeader);
+
+        SipURI routeUri = addressFactory.createSipURI(null, target.host());
+        routeUri.setPort(target.port());
+        routeUri.setTransportParam(transport.toLowerCase());
+        routeUri.setLrParam();
+        Address routeAddress = addressFactory.createAddress(routeUri);
+        RouteHeader routeHeader = headerFactory.createRouteHeader(routeAddress);
+        request.addHeader(routeHeader);
 
         SipURI contactUri = addressFactory.createSipURI(appProperties.getGb28181().getServerId(), resolveAnnounceIp());
         contactUri.setPort(appProperties.getGb28181().getLocalPort());
@@ -769,25 +999,44 @@ public class SipSignalService implements SipListener {
     }
 
     private String buildInviteSdp(InviteCommand command) {
-        boolean tcpMode = "TCP".equalsIgnoreCase(command.transport());
-        String mediaIp = appProperties.getGb28181().getMediaIp();
+        int streamMode = command.streamMode();
+        boolean tcpMode = streamMode != 0;
+        String mediaIp = resolveInviteMediaIp(command.announcedMediaIp());
         StringBuilder builder = new StringBuilder(256);
         builder.append("v=0").append("\r\n");
-        builder.append("o=").append(appProperties.getGb28181().getServerId()).append(" 0 0 IN IP4 ").append(mediaIp).append("\r\n");
+        builder.append("o=").append(command.channelId()).append(" 0 0 IN IP4 ").append(mediaIp)
+                .append("\r\n");
         builder.append("s=Play").append("\r\n");
         builder.append("c=IN IP4 ").append(mediaIp).append("\r\n");
         builder.append("t=0 0").append("\r\n");
         builder.append("m=video ").append(command.rtpPort()).append(" ")
                 .append(tcpMode ? "TCP/RTP/AVP" : "RTP/AVP")
-                .append(" 96").append("\r\n");
+                .append(" 96 97 98").append("\r\n");
         builder.append("a=recvonly").append("\r\n");
         builder.append("a=rtpmap:96 PS/90000").append("\r\n");
-        if (tcpMode) {
+        builder.append("a=rtpmap:97 MPEG4/90000").append("\r\n");
+        builder.append("a=rtpmap:98 H264/90000").append("\r\n");
+        if (streamMode == 1) {
             builder.append("a=setup:passive").append("\r\n");
             builder.append("a=connection:new").append("\r\n");
+            // ZLMediaKit openRtpServer (tcp_mode=1) only listens on the RTP port, but some devices
+            // will try to establish an extra RTCP connection on port+1. Use rtcp-mux to force
+            // single-port transport and improve compatibility (e.g. EasyGBD simulator).
+            builder.append("a=rtcp-mux").append("\r\n");
+        } else if (streamMode == 2) {
+            builder.append("a=setup:active").append("\r\n");
+            builder.append("a=connection:new").append("\r\n");
+            builder.append("a=rtcp-mux").append("\r\n");
         }
         builder.append("y=").append(command.ssrc()).append("\r\n");
         return builder.toString();
+    }
+
+    private String resolveInviteMediaIp(String announcedMediaIp) {
+        if (announcedMediaIp != null && !announcedMediaIp.isBlank()) {
+            return announcedMediaIp.trim();
+        }
+        return appProperties.getGb28181().getMediaIp();
     }
 
     private Optional<String> extractDeviceIdFromRequest(Request request) {
@@ -859,6 +1108,48 @@ public class SipSignalService implements SipListener {
         return ListeningPoint.UDP;
     }
 
+    private String resolveSipTransport(String preferredTransport) {
+        String normalized = normalizeTransport(preferredTransport);
+        if (sipProvider == null) {
+            return normalized;
+        }
+        ListeningPoint preferredPoint = sipProvider.getListeningPoint(normalized);
+        if (preferredPoint != null) {
+            return normalized;
+        }
+        ListeningPoint udpPoint = sipProvider.getListeningPoint(ListeningPoint.UDP);
+        if (udpPoint != null) {
+            if (!ListeningPoint.UDP.equals(normalized)) {
+                log.warn("SIP transport {} unavailable, fallback to UDP", normalized);
+            }
+            return ListeningPoint.UDP;
+        }
+        ListeningPoint[] points = sipProvider.getListeningPoints();
+        if (points != null && points.length > 0 && points[0] != null) {
+            String fallback = points[0].getTransport();
+            log.warn("SIP transport {} unavailable, fallback to {}", normalized, fallback);
+            return fallback;
+        }
+        return normalized;
+    }
+
+    private List<String> availableSipTransports() {
+        if (sipProvider == null) {
+            return List.of();
+        }
+        ListeningPoint[] points = sipProvider.getListeningPoints();
+        if (points == null || points.length == 0) {
+            return List.of();
+        }
+        List<String> transports = new ArrayList<>(points.length);
+        for (ListeningPoint point : points) {
+            if (point != null && point.getTransport() != null) {
+                transports.add(point.getTransport());
+            }
+        }
+        return transports;
+    }
+
     private String normalizeDeviceTransport(String transport) {
         if ("TCP".equalsIgnoreCase(transport)) {
             return "TCP";
@@ -909,14 +1200,35 @@ public class SipSignalService implements SipListener {
     }
 
     private void ensureSipReady() {
-        if (sipProvider == null || sipStack == null || headerFactory == null || addressFactory == null || messageFactory == null) {
+        if (sipProvider == null || sipStack == null || headerFactory == null || addressFactory == null
+                || messageFactory == null) {
             throw new IllegalStateException("SIP服务尚未初始化");
         }
     }
 
     public String generateSsrc() {
-        long value = Math.abs(UUID.randomUUID().getMostSignificantBits()) % 1_000_000_000L;
-        return appProperties.getGb28181().getSsrcPrefix() + String.format("%09d", value);
+        String prefix = appProperties.getGb28181().getSsrcPrefix();
+        if (prefix == null || prefix.isBlank()) {
+            prefix = "0";
+        }
+        prefix = prefix.trim();
+        if (prefix.length() > 1) {
+            prefix = prefix.substring(0, 1);
+        }
+
+        String domain = appProperties.getGb28181().getDomain();
+        String mid = "00000";
+        if (domain != null) {
+            String normalized = domain.trim();
+            if (normalized.length() >= 8) {
+                mid = normalized.substring(3, 8);
+            } else if (!normalized.isBlank()) {
+                mid = String.format("%-5s", normalized).replace(' ', '0');
+            }
+        }
+
+        int seq = ssrcSeq.updateAndGet(current -> current >= 9999 ? 1 : current + 1);
+        return prefix + mid + String.format("%04d", seq);
     }
 
     public record InviteCommand(
@@ -924,18 +1236,19 @@ public class SipSignalService implements SipListener {
             String deviceHost,
             int devicePort,
             String channelId,
-            String transport,
+            String sipTransport,
+            int streamMode,
             int rtpPort,
-            String ssrc
-    ) {
+            String ssrc,
+            String announcedMediaIp,
+            String streamId) {
     }
 
     public record InviteResult(
             boolean success,
             String callId,
             int statusCode,
-            String reason
-    ) {
+            String reason) {
         public static InviteResult success(String callId, int statusCode, String reason) {
             return new InviteResult(true, callId, statusCode, reason);
         }
@@ -954,8 +1267,7 @@ public class SipSignalService implements SipListener {
             String callId,
             int statusCode,
             String reason,
-            String timestamp
-    ) {
+            String timestamp) {
         public static SipCommandResult success(String callId, int statusCode, String reason) {
             return new SipCommandResult(true, callId, statusCode, reason, Instant.now().toString());
         }
@@ -971,22 +1283,19 @@ public class SipSignalService implements SipListener {
 
     private record InviteBuildResult(
             Request request,
-            String callId
-    ) {
+            String callId) {
     }
 
     private record TargetDevice(
             String deviceId,
             String host,
             int port,
-            String transport
-    ) {
+            String transport) {
     }
 
     private record DeviceEndpoint(
             String host,
             int port,
-            String transport
-    ) {
+            String transport) {
     }
 }
