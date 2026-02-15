@@ -161,6 +161,9 @@ public class PreviewService {
                         device.deviceId(), channel.channelId(), codec, finalCodec);
                 deviceService.updateChannelCodec(device.id(), channel.channelId(), finalCodec);
             }
+            if (device.channelCount() <= 1 && !normalizeCodec(device.preferredCodec()).equals(finalCodec)) {
+                deviceService.updateDevicePreferredCodec(device.id(), finalCodec);
+            }
             try {
                 validateCodecSupport(finalCodec, command.browserSupportsH265());
             } catch (ApiException ex) {

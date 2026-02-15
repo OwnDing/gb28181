@@ -298,6 +298,7 @@ export default function VideoPreview() {
         copy[index] = data;
         return copy;
       });
+      await loadChannels(selectedDevice.id);
       toast.success(data.message || "预览启动成功");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "启动预览失败");

@@ -117,6 +117,11 @@ public class DeviceService {
         deviceRepository.updateChannelCodec(deviceId, channelId, codec.toUpperCase());
     }
 
+    public void updateDevicePreferredCodec(long deviceId, String codec) {
+        validateCodec(codec);
+        deviceRepository.updateDevicePreferredCodec(deviceId, codec.toUpperCase());
+    }
+
     private void validateCodec(String codec) {
         if (!"H264".equalsIgnoreCase(codec) && !"H265".equalsIgnoreCase(codec)) {
             throw new ApiException(400, "编码仅支持 H264 或 H265");

@@ -6,7 +6,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -419,15 +421,39 @@ public class Gb28181Repository {
 
     @Transactional
     public void syncCatalog(String deviceId, List<UpsertCatalogItemCommand> items) {
-        Optional<Long> devicePk = jdbcClient.sql("SELECT id FROM gb_device WHERE device_id = :deviceId LIMIT 1")
+        Optional<DevicePkAndCodec> deviceInfo = jdbcClient.sql("""
+                        SELECT id, preferred_codec
+                        FROM gb_device
+                        WHERE device_id = :deviceId
+                        LIMIT 1
+                        """)
                 .param("deviceId", deviceId)
-                .query(Long.class)
+                .query((rs, rowNum) -> new DevicePkAndCodec(
+                        rs.getLong("id"),
+                        rs.getString("preferred_codec")))
                 .optional();
-        if (devicePk.isEmpty()) {
+        if (deviceInfo.isEmpty()) {
             return;
         }
 
-        long pk = devicePk.get();
+        long pk = deviceInfo.get().devicePk();
+        String preferredCodec = normalizeCodec(deviceInfo.get().preferredCodec());
+        if (preferredCodec == null) {
+            preferredCodec = "H264";
+        }
+        Map<String, String> existingCodecByChannelId = new HashMap<>();
+        jdbcClient.sql("""
+                        SELECT channel_id, codec
+                        FROM gb_channel
+                        WHERE device_pk = :devicePk
+                        """)
+                .param("devicePk", pk)
+                .query((rs, rowNum) -> {
+                    existingCodecByChannelId.put(rs.getString("channel_id"), rs.getString("codec"));
+                    return 0;
+                })
+                .list();
+
         String now = Instant.now().toString();
         jdbcClient.sql("DELETE FROM gb_channel WHERE device_pk = :devicePk")
                 .param("devicePk", pk)
@@ -435,6 +461,13 @@ public class Gb28181Repository {
 
         int channelNo = 1;
         for (UpsertCatalogItemCommand item : items) {
+            String codec = normalizeCodec(item.codec());
+            if (codec == null) {
+                codec = normalizeCodec(existingCodecByChannelId.get(item.channelId()));
+            }
+            if (codec == null) {
+                codec = preferredCodec;
+            }
             jdbcClient.sql("""
                             INSERT INTO gb_channel (device_pk, channel_no, channel_id, name, codec, status, created_at, updated_at)
                             VALUES (:devicePk, :channelNo, :channelId, :name, :codec, :status, :now, :now)
@@ -449,7 +482,7 @@ public class Gb28181Repository {
                     .param("channelNo", channelNo++)
                     .param("channelId", item.channelId())
                     .param("name", item.name() == null || item.name().isBlank() ? item.channelId() : item.name())
-                    .param("codec", item.codec() == null ? "H264" : item.codec())
+                    .param("codec", codec)
                     .param("status", item.status() == null ? "OFFLINE" : item.status().toUpperCase())
                     .param("now", now)
                     .update();
@@ -464,6 +497,20 @@ public class Gb28181Repository {
                 .param("updatedAt", now)
                 .param("devicePk", pk)
                 .update();
+    }
+
+    private String normalizeCodec(String codec) {
+        if (codec == null || codec.isBlank()) {
+            return null;
+        }
+        String upper = codec.toUpperCase();
+        if (upper.contains("265") || upper.contains("HEVC")) {
+            return "H265";
+        }
+        if (upper.contains("264") || upper.contains("AVC")) {
+            return "H264";
+        }
+        return null;
     }
 
     public List<GbCatalogItem> listCatalog(String deviceId) {
@@ -603,5 +650,8 @@ public class Gb28181Repository {
             String codec,
             String status
     ) {
+    }
+
+    private record DevicePkAndCodec(long devicePk, String preferredCodec) {
     }
 }

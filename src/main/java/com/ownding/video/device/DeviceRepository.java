@@ -204,6 +204,19 @@ public class DeviceRepository {
                 .update();
     }
 
+    public int updateDevicePreferredCodec(long id, String preferredCodec) {
+        String now = Instant.now().toString();
+        return jdbcClient.sql("""
+                        UPDATE gb_device
+                        SET preferred_codec = :preferredCodec, updated_at = :updatedAt
+                        WHERE id = :id
+                        """)
+                .param("preferredCodec", preferredCodec)
+                .param("updatedAt", now)
+                .param("id", id)
+                .update();
+    }
+
     public List<DeviceChannel> findChannelsByDeviceId(long deviceId) {
         return jdbcClient.sql("""
                         SELECT id, device_pk, channel_no, channel_id, name, codec, status, created_at, updated_at
