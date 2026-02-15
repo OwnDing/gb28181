@@ -34,41 +34,28 @@ public class ZlmClient {
     @SuppressWarnings("unchecked")
     public Integer openRtpServer(String streamId, int tcpMode, String ssrc) {
         try {
-            String baseUrl = trimTrailingSlash(appProperties.getZlm().getBaseUrl());
-            UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(baseUrl)
-                    .path("/index/api/openRtpServer")
-                    .queryParam("secret", appProperties.getZlm().getSecret())
-                    .queryParam("port", 0)
-                    .queryParam("tcp_mode", tcpMode)
-                    .queryParam("stream_id", streamId);
-            if (ssrc != null && !ssrc.isBlank()) {
-                uriBuilder.queryParam("ssrc", ssrc.trim());
+            Map<String, Object> response = requestOpenRtpServer(streamId, tcpMode, ssrc);
+            if (isSuccess(response)) {
+                return extractPort(response);
             }
-            Map<String, Object> response = webClient.get()
-                    .uri(uriBuilder.build(true).toUri())
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .block(Duration.ofSeconds(3));
-
-            if (response == null) {
-                return null;
-            }
-            Number code = (Number) response.get("code");
-            if (code == null || code.intValue() != 0) {
-                log.warn("openRtpServer failed, response={}", response);
-                return null;
-            }
-            Object portObj = response.get("port");
-            if (portObj instanceof Number number) {
-                return number.intValue();
-            }
-            Object dataObj = response.get("data");
-            if (dataObj instanceof Map<?, ?> dataMap) {
-                Object dataPort = dataMap.get("port");
-                if (dataPort instanceof Number dataPortNumber) {
-                    return dataPortNumber.intValue();
+            if (isStreamAlreadyExists(response)) {
+                log.warn("openRtpServer stream already exists, try to close stale rtp server first. streamId={}",
+                        streamId);
+                closeRtpServer(streamId);
+                try {
+                    Thread.sleep(120);
+                } catch (InterruptedException interruptedEx) {
+                    Thread.currentThread().interrupt();
+                    return null;
                 }
+                Map<String, Object> retried = requestOpenRtpServer(streamId, tcpMode, ssrc);
+                if (isSuccess(retried)) {
+                    return extractPort(retried);
+                }
+                log.warn("openRtpServer retry failed, response={}", retried);
+                return null;
             }
+            log.warn("openRtpServer failed, response={}", response);
             return null;
         } catch (Exception ex) {
             log.warn("openRtpServer exception: {}", ex.getMessage());
@@ -210,6 +197,9 @@ public class ZlmClient {
     }
 
     private String extractMessage(Map<String, Object> response) {
+        if (response == null) {
+            return "unknown";
+        }
         Object msg = response.get("msg");
         if (msg == null || String.valueOf(msg).isBlank()) {
             msg = response.get("message");
@@ -236,6 +226,75 @@ public class ZlmClient {
                 if (nested != null && !String.valueOf(nested).isBlank()) {
                     return String.valueOf(nested);
                 }
+            }
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> requestOpenRtpServer(String streamId, int tcpMode, String ssrc) {
+        String baseUrl = trimTrailingSlash(appProperties.getZlm().getBaseUrl());
+        UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(baseUrl)
+                .path("/index/api/openRtpServer")
+                .queryParam("secret", appProperties.getZlm().getSecret())
+                .queryParam("port", 0)
+                .queryParam("tcp_mode", tcpMode)
+                .queryParam("stream_id", streamId);
+        if (ssrc != null && !ssrc.isBlank()) {
+            uriBuilder.queryParam("ssrc", ssrc.trim());
+        }
+        return webClient.get()
+                .uri(uriBuilder.build(true).toUri())
+                .retrieve()
+                .bodyToMono(Map.class)
+                .block(Duration.ofSeconds(3));
+    }
+
+    private boolean isSuccess(Map<String, Object> response) {
+        Integer code = extractCode(response);
+        return code != null && code == 0;
+    }
+
+    private boolean isStreamAlreadyExists(Map<String, Object> response) {
+        Integer code = extractCode(response);
+        if (code == null || code != -300) {
+            return false;
+        }
+        String msg = extractMessage(response).toLowerCase();
+        return msg.contains("already exists") || msg.contains("stream already exists");
+    }
+
+    private Integer extractCode(Map<String, Object> response) {
+        if (response == null) {
+            return null;
+        }
+        Object codeObj = response.get("code");
+        if (codeObj instanceof Number number) {
+            return number.intValue();
+        }
+        if (codeObj != null) {
+            try {
+                return Integer.parseInt(String.valueOf(codeObj));
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private Integer extractPort(Map<String, Object> response) {
+        if (response == null) {
+            return null;
+        }
+        Object portObj = response.get("port");
+        if (portObj instanceof Number number) {
+            return number.intValue();
+        }
+        Object dataObj = response.get("data");
+        if (dataObj instanceof Map<?, ?> dataMap) {
+            Object dataPort = dataMap.get("port");
+            if (dataPort instanceof Number dataPortNumber) {
+                return dataPortNumber.intValue();
             }
         }
         return null;
