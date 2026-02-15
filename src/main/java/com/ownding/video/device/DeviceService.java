@@ -109,6 +109,14 @@ public class DeviceService {
                 .orElseThrow(() -> new ApiException(404, "通道不存在"));
     }
 
+    public void updateChannelCodec(long deviceId, String channelId, String codec) {
+        if (channelId == null || channelId.isBlank()) {
+            return;
+        }
+        validateCodec(codec);
+        deviceRepository.updateChannelCodec(deviceId, channelId, codec.toUpperCase());
+    }
+
     private void validateCodec(String codec) {
         if (!"H264".equalsIgnoreCase(codec) && !"H265".equalsIgnoreCase(codec)) {
             throw new ApiException(400, "编码仅支持 H264 或 H265");

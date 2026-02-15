@@ -50,8 +50,7 @@ public class PreviewService {
             throw new ApiException(400, "设备离线，无法预览");
         }
         DeviceChannel channel = deviceService.resolveChannel(device.id(), command.channelId());
-        String codec = channel.codec().toUpperCase();
-        validateCodecSupport(codec, command.browserSupportsH265());
+        String codec = normalizeCodec(channel.codec());
 
         String sessionKey = buildSessionKey(device.id(), channel.channelId());
         String app = appProperties.getZlm().getDefaultApp();
@@ -155,8 +154,22 @@ public class PreviewService {
                 zlmClient.closeRtpServer(streamId);
                 throw new ApiException(504, "设备已应答但未推流，请检查通道ID、RTP端口映射或设备编码设置");
             }
+            String detectedCodec = normalizeCodec(zlmClient.detectStreamCodec(app, streamId));
+            String finalCodec = detectedCodec == null ? codec : detectedCodec;
+            if (!finalCodec.equals(codec)) {
+                log.info("channel codec corrected by stream probe. deviceId={}, channelId={}, dbCodec={}, streamCodec={}",
+                        device.deviceId(), channel.channelId(), codec, finalCodec);
+                deviceService.updateChannelCodec(device.id(), channel.channelId(), finalCodec);
+            }
+            try {
+                validateCodecSupport(finalCodec, command.browserSupportsH265());
+            } catch (ApiException ex) {
+                sipSignalService.bye(inviteResult.callId());
+                zlmClient.closeRtpServer(streamId);
+                throw ex;
+            }
             log.info("preview stream ready. deviceId={}, channelId={}, streamId={}, codec={}",
-                    device.deviceId(), inviteChannelId, streamId, channel.codec().toUpperCase());
+                    device.deviceId(), inviteChannelId, streamId, finalCodec);
 
             PlayUrls urls = zlmClient.buildPlayUrls(app, streamId);
 
@@ -174,7 +187,7 @@ public class PreviewService {
                     device.id(),
                     device.deviceId(),
                     channel.channelId(),
-                    channel.codec().toUpperCase(),
+                    finalCodec,
                     app,
                     streamId,
                     protocol,
@@ -502,6 +515,20 @@ public class PreviewService {
                 .filter(ip -> ip != null && !ip.isBlank())
                 .distinct()
                 .toList();
+    }
+
+    private String normalizeCodec(String codec) {
+        if (codec == null || codec.isBlank()) {
+            return "H264";
+        }
+        String upper = codec.toUpperCase();
+        if (upper.contains("265") || upper.contains("HEVC")) {
+            return "H265";
+        }
+        if (upper.contains("264") || upper.contains("AVC")) {
+            return "H264";
+        }
+        return "H264";
     }
 
     public record StartPreviewCommand(

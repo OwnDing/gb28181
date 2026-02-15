@@ -127,6 +127,28 @@ public class ZlmClient {
     }
 
     @SuppressWarnings("unchecked")
+    public String detectStreamCodec(String app, String streamId) {
+        try {
+            Map<String, Object> response = webClient.get()
+                    .uri(appProperties.getZlm().getBaseUrl()
+                                    + "/index/api/getMediaList?secret={secret}&app={app}&stream={stream}",
+                            Map.of("secret", appProperties.getZlm().getSecret(),
+                                    "app", app,
+                                    "stream", streamId))
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block(Duration.ofSeconds(3));
+            if (!isSuccess(response)) {
+                return null;
+            }
+            return detectCodecFromObject(response.get("data"), 0);
+        } catch (Exception ex) {
+            log.debug("detectStreamCodec exception: {}", ex.getMessage());
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
     public PreviewService.WebRtcAnswer playWebRtc(String app, String streamId, String offerSdp) {
         try {
             String baseUrl = trimTrailingSlash(appProperties.getZlm().getBaseUrl());
@@ -296,6 +318,76 @@ public class ZlmClient {
             if (dataPort instanceof Number dataPortNumber) {
                 return dataPortNumber.intValue();
             }
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String detectCodecFromObject(Object value, int depth) {
+        if (value == null || depth > 6) {
+            return null;
+        }
+        if (value instanceof Map<?, ?> rawMap) {
+            Map<String, Object> map = (Map<String, Object>) rawMap;
+            String byMap = detectCodecFromMap(map);
+            if (byMap != null) {
+                return byMap;
+            }
+            for (Object child : map.values()) {
+                String detected = detectCodecFromObject(child, depth + 1);
+                if (detected != null) {
+                    return detected;
+                }
+            }
+            return null;
+        }
+        if (value instanceof List<?> list) {
+            for (Object child : list) {
+                String detected = detectCodecFromObject(child, depth + 1);
+                if (detected != null) {
+                    return detected;
+                }
+            }
+        }
+        return null;
+    }
+
+    private String detectCodecFromMap(Map<String, Object> map) {
+        String trackType = firstString(map, "codec_type_name", "track_type", "type", "kind", "media");
+        if (trackType != null && trackType.toLowerCase().contains("audio")) {
+            return null;
+        }
+        String codec = firstString(map, "codec_id_name", "codec", "codec_name", "videoCodec", "vcodec");
+        return normalizeCodec(codec);
+    }
+
+    private String firstString(Map<String, Object> map, String... keys) {
+        if (map == null || keys == null) {
+            return null;
+        }
+        for (String key : keys) {
+            Object value = map.get(key);
+            if (value == null) {
+                continue;
+            }
+            String text = String.valueOf(value).trim();
+            if (!text.isBlank()) {
+                return text;
+            }
+        }
+        return null;
+    }
+
+    private String normalizeCodec(String codecText) {
+        if (codecText == null || codecText.isBlank()) {
+            return null;
+        }
+        String upper = codecText.toUpperCase();
+        if (upper.contains("265") || upper.contains("HEVC")) {
+            return "H265";
+        }
+        if (upper.contains("264") || upper.contains("AVC")) {
+            return "H264";
         }
         return null;
     }

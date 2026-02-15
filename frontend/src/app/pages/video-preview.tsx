@@ -31,6 +31,16 @@ function supportsH265Browser() {
   if (typeof window === "undefined") {
     return false;
   }
+  if (typeof RTCRtpReceiver !== "undefined" && typeof RTCRtpReceiver.getCapabilities === "function") {
+    const caps = RTCRtpReceiver.getCapabilities("video");
+    if (caps && Array.isArray(caps.codecs)) {
+      return caps.codecs.some((item) => {
+        const mime = (item.mimeType || "").toLowerCase();
+        const fmtp = (item.sdpFmtpLine || "").toLowerCase();
+        return mime.includes("h265") || mime.includes("hevc") || fmtp.includes("h265") || fmtp.includes("hevc");
+      });
+    }
+  }
   const video = document.createElement("video");
   const hevcChecks = [
     'video/mp4; codecs="hvc1.1.6.L93.B0"',

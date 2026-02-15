@@ -272,6 +272,20 @@ public class DeviceRepository {
                 .optional();
     }
 
+    public int updateChannelCodec(long devicePk, String channelId, String codec) {
+        String now = Instant.now().toString();
+        return jdbcClient.sql("""
+                        UPDATE gb_channel
+                        SET codec = :codec, updated_at = :updatedAt
+                        WHERE device_pk = :devicePk AND channel_id = :channelId
+                        """)
+                .param("codec", codec)
+                .param("updatedAt", now)
+                .param("devicePk", devicePk)
+                .param("channelId", channelId)
+                .update();
+    }
+
     @Transactional
     protected void recreateChannels(long devicePk, String deviceCode, int channelCount, String codec) {
         jdbcClient.sql("DELETE FROM gb_channel WHERE device_pk = :devicePk")
