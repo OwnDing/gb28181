@@ -89,11 +89,10 @@ function validatePayload(payload: DeviceRequest): string | null {
 }
 
 type DeviceRecordingSummary = {
-  targetRecording: boolean;
+  state: "RECORDING" | "STREAM_ONLINE_NOT_RECORDING" | "OFFLINE_OR_UNMANAGED";
   recordingChannels: number;
+  streamOnlineNotRecordingChannels: number;
   totalChannels: number;
-  hasError: boolean;
-  errorMessage?: string;
 };
 
 function buildRecordingSummary(
@@ -102,22 +101,24 @@ function buildRecordingSummary(
   const result: Record<number, DeviceRecordingSummary> = {};
   for (const item of statuses) {
     const current = result[item.devicePk] ?? {
-      targetRecording: false,
+      state: "OFFLINE_OR_UNMANAGED" as const,
       recordingChannels: 0,
+      streamOnlineNotRecordingChannels: 0,
       totalChannels: 0,
-      hasError: false,
-      errorMessage: undefined,
     };
-    current.targetRecording = current.targetRecording || item.targetRecording;
     current.totalChannels += 1;
     if (item.recording) {
       current.recordingChannels += 1;
     }
-    if (item.lastError) {
-      current.hasError = true;
-      if (!current.errorMessage) {
-        current.errorMessage = `[${item.channelId}] ${item.lastError}`;
-      }
+    if (item.streamReady && !item.recording) {
+      current.streamOnlineNotRecordingChannels += 1;
+    }
+    if (current.recordingChannels > 0) {
+      current.state = "RECORDING";
+    } else if (current.streamOnlineNotRecordingChannels > 0) {
+      current.state = "STREAM_ONLINE_NOT_RECORDING";
+    } else {
+      current.state = "OFFLINE_OR_UNMANAGED";
     }
     result[item.devicePk] = current;
   }
@@ -144,10 +145,15 @@ export default function DeviceManagement() {
       if (!silent) {
         setLoading(true);
       }
-      const [list, statuses] = await Promise.all([
-        deviceApi.list(),
-        storageApi.backgroundStatus().catch(() => [] as BackgroundRecordingStatus[]),
-      ]);
+      const list = await deviceApi.list();
+      let statuses: BackgroundRecordingStatus[] = [];
+      try {
+        statuses = await storageApi.backgroundStatus();
+      } catch (statusError) {
+        if (!silent) {
+          toast.error(statusError instanceof Error ? statusError.message : "后台录像状态获取失败");
+        }
+      }
       setDevices(list);
       setRecordingSummaryMap(buildRecordingSummary(statuses));
     } catch (error) {
@@ -321,24 +327,21 @@ export default function DeviceManagement() {
                     <TableCell>
                       {(() => {
                         const summary = recordingSummaryMap[device.id];
-                        if (!summary || !summary.targetRecording) {
-                          return <Badge variant="secondary">未录制</Badge>;
+                        if (!summary || summary.state === "OFFLINE_OR_UNMANAGED") {
+                          return <Badge variant="outline">离线/未托管</Badge>;
                         }
-                        if (summary.recordingChannels > 0) {
+                        if (summary.state === "RECORDING") {
                           return (
                             <Badge variant="default">
                               录制中 {summary.recordingChannels}/{summary.totalChannels}
                             </Badge>
                           );
                         }
-                        if (summary.hasError) {
-                          return (
-                            <Badge variant="destructive" title={summary.errorMessage}>
-                              录制异常
-                            </Badge>
-                          );
-                        }
-                        return <Badge variant="secondary">待启动</Badge>;
+                        return (
+                          <Badge variant="destructive">
+                            流在线未录制 {summary.streamOnlineNotRecordingChannels}/{summary.totalChannels}
+                          </Badge>
+                        );
                       })()}
                     </TableCell>
                     <TableCell>

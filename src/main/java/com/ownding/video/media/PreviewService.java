@@ -333,26 +333,55 @@ public class PreviewService {
                 .toList();
     }
 
-    public Optional<ChannelRuntime> findChannelRuntime(long devicePk, String channelId) {
+    public Optional<ChannelRuntime> findChannelRuntime(long devicePk, String deviceId, String channelId) {
         SessionHolder holder = sessionByKey.get(buildSessionKey(devicePk, channelId));
-        if (holder == null) {
+        if (holder != null) {
+            ZlmClient.MediaRuntime mediaRuntime = zlmClient.queryMediaRuntime(holder.app, holder.streamId);
+            boolean streamReady = mediaRuntime != null && mediaRuntime.streamReady();
+            boolean recording = holder.recordingEnabled && (
+                    mediaRuntime != null
+                            ? mediaRuntime.mp4Recording()
+                            : zlmClient.isMp4Recording(holder.app, holder.streamId)
+            );
+            return Optional.of(new ChannelRuntime(
+                    holder.devicePk,
+                    holder.deviceId,
+                    holder.channelId,
+                    holder.app,
+                    holder.streamId,
+                    holder.recordingEnabled,
+                    recording,
+                    streamReady,
+                    holder.backgroundPinned,
+                    holder.viewerCount.get(),
+                    holder.startedAt,
+                    holder.updatedAt
+            ));
+        }
+
+        // Fallback probe: process restarted or session not tracked in memory, but stream
+        // may still be alive and recording in ZLMediaKit.
+        String app = appProperties.getZlm().getDefaultApp();
+        String expectedStreamId = buildStreamId(channelId);
+        ZlmClient.MediaRuntime mediaRuntime = zlmClient.queryMediaRuntime(app, expectedStreamId);
+        if (mediaRuntime == null) {
             return Optional.empty();
         }
-        boolean streamReady = zlmClient.isStreamReady(holder.app, holder.streamId);
-        boolean recording = holder.recordingEnabled && zlmClient.isMp4Recording(holder.app, holder.streamId);
+        boolean streamReady = mediaRuntime.streamReady();
+        boolean recording = mediaRuntime.mp4Recording();
         return Optional.of(new ChannelRuntime(
-                holder.devicePk,
-                holder.deviceId,
-                holder.channelId,
-                holder.app,
-                holder.streamId,
-                holder.recordingEnabled,
+                devicePk,
+                deviceId,
+                channelId,
+                app,
+                expectedStreamId,
+                recording,
                 recording,
                 streamReady,
-                holder.backgroundPinned,
-                holder.viewerCount.get(),
-                holder.startedAt,
-                holder.updatedAt
+                false,
+                0,
+                null,
+                null
         ));
     }
 

@@ -85,6 +85,7 @@ public class BackgroundRecordingScheduler {
                 String channelKey = key(device.id(), channel.channelId());
                 Optional<PreviewService.ChannelRuntime> runtimeOpt = previewService.findChannelRuntime(
                         device.id(),
+                        device.deviceId(),
                         channel.channelId()
                 );
                 PreviewService.ChannelRuntime runtime = runtimeOpt.orElse(null);

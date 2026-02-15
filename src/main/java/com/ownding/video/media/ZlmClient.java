@@ -11,6 +11,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -111,6 +112,10 @@ public class ZlmClient {
     @SuppressWarnings("unchecked")
     public boolean isMp4Recording(String app, String streamId) {
         try {
+            MediaRuntime runtime = queryMediaRuntime(app, streamId);
+            if (runtime != null) {
+                return runtime.mp4Recording();
+            }
             Map<String, Object> response = requestRecordControl("/index/api/isRecording", app, streamId, null);
             if (!isSuccess(response)) {
                 return false;
@@ -120,6 +125,58 @@ public class ZlmClient {
             log.debug("isMp4Recording exception, app={}, streamId={}, err={}", app, streamId, ex.getMessage());
             return false;
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, MediaRuntime> listMediaRuntimeByApp(String app) {
+        try {
+            Map<String, Object> response = requestMediaList(app, null);
+            if (!isSuccess(response)) {
+                return Map.of();
+            }
+            Object dataObj = response.get("data");
+            Map<String, MediaRuntime> result = new LinkedHashMap<>();
+            if (dataObj instanceof List<?> list) {
+                for (Object item : list) {
+                    if (!(item instanceof Map<?, ?> raw)) {
+                        continue;
+                    }
+                    Map<String, Object> map = (Map<String, Object>) raw;
+                    String stream = firstString(map, "stream");
+                    if (stream == null || stream.isBlank()) {
+                        continue;
+                    }
+                    String runtimeApp = firstString(map, "app");
+                    if (runtimeApp == null || runtimeApp.isBlank()) {
+                        runtimeApp = app;
+                    }
+                    boolean mp4 = asBoolean(map.get("isRecordingMP4"));
+                    MediaRuntime existing = result.get(stream);
+                    if (existing == null) {
+                        result.put(stream, new MediaRuntime(runtimeApp, stream, true, mp4));
+                    } else {
+                        result.put(stream, new MediaRuntime(
+                                existing.app(),
+                                existing.streamId(),
+                                true,
+                                existing.mp4Recording() || mp4
+                        ));
+                    }
+                }
+            }
+            return result;
+        } catch (Exception ex) {
+            log.debug("listMediaRuntimeByApp exception, app={}, err={}", app, ex.getMessage());
+            return Map.of();
+        }
+    }
+
+    public MediaRuntime queryMediaRuntime(String app, String streamId) {
+        if (streamId == null || streamId.isBlank()) {
+            return null;
+        }
+        Map<String, MediaRuntime> runtimeMap = listMediaRuntimeByApp(app);
+        return runtimeMap.get(streamId);
     }
 
     @SuppressWarnings("unchecked")
@@ -142,28 +199,8 @@ public class ZlmClient {
     @SuppressWarnings("unchecked")
     public boolean isStreamReady(String app, String streamId) {
         try {
-            Map<String, Object> response = webClient.get()
-                    .uri(appProperties.getZlm().getBaseUrl()
-                                    + "/index/api/getMediaList?secret={secret}&app={app}&stream={stream}",
-                            Map.of("secret", appProperties.getZlm().getSecret(),
-                                    "app", app,
-                                    "stream", streamId))
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .block(Duration.ofSeconds(3));
-
-            if (response == null) {
-                return false;
-            }
-            Number code = (Number) response.get("code");
-            if (code == null || code.intValue() != 0) {
-                return false;
-            }
-            Object dataObj = response.get("data");
-            if (dataObj instanceof List<?> list) {
-                return !list.isEmpty();
-            }
-            return false;
+            MediaRuntime runtime = queryMediaRuntime(app, streamId);
+            return runtime != null && runtime.streamReady();
         } catch (Exception ex) {
             log.debug("isStreamReady exception: {}", ex.getMessage());
             return false;
@@ -173,15 +210,7 @@ public class ZlmClient {
     @SuppressWarnings("unchecked")
     public String detectStreamCodec(String app, String streamId) {
         try {
-            Map<String, Object> response = webClient.get()
-                    .uri(appProperties.getZlm().getBaseUrl()
-                                    + "/index/api/getMediaList?secret={secret}&app={app}&stream={stream}",
-                            Map.of("secret", appProperties.getZlm().getSecret(),
-                                    "app", app,
-                                    "stream", streamId))
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .block(Duration.ofSeconds(3));
+            Map<String, Object> response = requestMediaList(app, streamId);
             if (!isSuccess(response)) {
                 return null;
             }
@@ -328,6 +357,25 @@ public class ZlmClient {
                 .queryParam("stream", streamId);
         if (customPath != null && !customPath.isBlank()) {
             uriBuilder.queryParam("customized_path", customPath.trim());
+        }
+        return webClient.get()
+                .uri(uriBuilder.build(true).toUri())
+                .retrieve()
+                .bodyToMono(Map.class)
+                .block(Duration.ofSeconds(3));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> requestMediaList(String app, String streamId) {
+        String baseUrl = trimTrailingSlash(appProperties.getZlm().getBaseUrl());
+        UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(baseUrl)
+                .path("/index/api/getMediaList")
+                .queryParam("secret", appProperties.getZlm().getSecret());
+        if (app != null && !app.isBlank()) {
+            uriBuilder.queryParam("app", app);
+        }
+        if (streamId != null && !streamId.isBlank()) {
+            uriBuilder.queryParam("stream", streamId);
         }
         return webClient.get()
                 .uri(uriBuilder.build(true).toUri())
@@ -522,5 +570,12 @@ public class ZlmClient {
             return "H264";
         }
         return null;
+    }
+
+    public record MediaRuntime(
+            String app,
+            String streamId,
+            boolean streamReady,
+            boolean mp4Recording) {
     }
 }
