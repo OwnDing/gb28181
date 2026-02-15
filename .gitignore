@@ -46,3 +46,5 @@ dist-ssr
 *.db-wal
 
 *.log
+
+/data/

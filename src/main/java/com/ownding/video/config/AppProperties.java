@@ -135,6 +135,7 @@ public class AppProperties {
     public static class Storage {
         @Min(30)
         private int cleanupIntervalSeconds = 180;
+        private String zlmRecordPath = "";
 
         public int getCleanupIntervalSeconds() {
             return cleanupIntervalSeconds;
@@ -142,6 +143,14 @@ public class AppProperties {
 
         public void setCleanupIntervalSeconds(int cleanupIntervalSeconds) {
             this.cleanupIntervalSeconds = cleanupIntervalSeconds;
+        }
+
+        public String getZlmRecordPath() {
+            return zlmRecordPath;
+        }
+
+        public void setZlmRecordPath(String zlmRecordPath) {
+            this.zlmRecordPath = zlmRecordPath;
         }
     }
 

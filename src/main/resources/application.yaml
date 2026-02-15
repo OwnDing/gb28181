@@ -33,6 +33,7 @@ app:
   storage:
     cleanup-interval-seconds: 180
     cleanup-interval-ms: 180000
+    zlm-record-path: /record
   gb28181:
     enabled: true
     auto-register-unknown-device: true

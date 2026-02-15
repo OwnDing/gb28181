@@ -22,9 +22,12 @@ import java.util.List;
 public class StorageController {
 
     private final StorageService storageService;
+    private final BackgroundRecordingScheduler backgroundRecordingScheduler;
 
-    public StorageController(StorageService storageService) {
+    public StorageController(StorageService storageService,
+            BackgroundRecordingScheduler backgroundRecordingScheduler) {
         this.storageService = storageService;
+        this.backgroundRecordingScheduler = backgroundRecordingScheduler;
     }
 
     @GetMapping("/storage/policy")
@@ -52,6 +55,11 @@ public class StorageController {
     @PostMapping("/storage/cleanup")
     public ApiResult<StorageUsage> cleanupNow() {
         return ApiResult.success("清理完成", storageService.executeCleanup());
+    }
+
+    @GetMapping("/storage/background-recording/status")
+    public ApiResult<List<BackgroundRecordingScheduler.BackgroundRecordingStatus>> backgroundRecordingStatus() {
+        return ApiResult.success(backgroundRecordingScheduler.listStatuses());
     }
 
     @GetMapping("/records")

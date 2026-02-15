@@ -79,6 +79,50 @@ public class ZlmClient {
     }
 
     @SuppressWarnings("unchecked")
+    public boolean startMp4Record(String app, String streamId, String customPath) {
+        try {
+            Map<String, Object> response = requestRecordControl("/index/api/startRecord", app, streamId, customPath);
+            if (isSuccess(response) || isAlreadyRecording(response)) {
+                return true;
+            }
+            log.warn("startMp4Record failed, app={}, streamId={}, response={}", app, streamId, response);
+            return false;
+        } catch (Exception ex) {
+            log.warn("startMp4Record exception, app={}, streamId={}, err={}", app, streamId, ex.getMessage());
+            return false;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public boolean stopMp4Record(String app, String streamId) {
+        try {
+            Map<String, Object> response = requestRecordControl("/index/api/stopRecord", app, streamId, null);
+            if (isSuccess(response) || isNotRecording(response) || isStreamNotFound(response)) {
+                return true;
+            }
+            log.warn("stopMp4Record failed, app={}, streamId={}, response={}", app, streamId, response);
+            return false;
+        } catch (Exception ex) {
+            log.warn("stopMp4Record exception, app={}, streamId={}, err={}", app, streamId, ex.getMessage());
+            return false;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public boolean isMp4Recording(String app, String streamId) {
+        try {
+            Map<String, Object> response = requestRecordControl("/index/api/isRecording", app, streamId, null);
+            if (!isSuccess(response)) {
+                return false;
+            }
+            return extractRecordingFlag(response);
+        } catch (Exception ex) {
+            log.debug("isMp4Recording exception, app={}, streamId={}, err={}", app, streamId, ex.getMessage());
+            return false;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
     public boolean waitStreamReady(String app, String streamId, Duration timeout) {
         Instant deadline = Instant.now().plus(timeout);
         while (Instant.now().isBefore(deadline)) {
@@ -272,6 +316,26 @@ public class ZlmClient {
                 .block(Duration.ofSeconds(3));
     }
 
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> requestRecordControl(String path, String app, String streamId, String customPath) {
+        String baseUrl = trimTrailingSlash(appProperties.getZlm().getBaseUrl());
+        UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(baseUrl)
+                .path(path)
+                .queryParam("secret", appProperties.getZlm().getSecret())
+                .queryParam("type", 1)
+                .queryParam("vhost", "__defaultVhost__")
+                .queryParam("app", app)
+                .queryParam("stream", streamId);
+        if (customPath != null && !customPath.isBlank()) {
+            uriBuilder.queryParam("customized_path", customPath.trim());
+        }
+        return webClient.get()
+                .uri(uriBuilder.build(true).toUri())
+                .retrieve()
+                .bodyToMono(Map.class)
+                .block(Duration.ofSeconds(3));
+    }
+
     private boolean isSuccess(Map<String, Object> response) {
         Integer code = extractCode(response);
         return code != null && code == 0;
@@ -284,6 +348,74 @@ public class ZlmClient {
         }
         String msg = extractMessage(response).toLowerCase();
         return msg.contains("already exists") || msg.contains("stream already exists");
+    }
+
+    private boolean isAlreadyRecording(Map<String, Object> response) {
+        String msg = extractMessage(response).toLowerCase();
+        return msg.contains("already recording") || msg.contains("recording already started");
+    }
+
+    private boolean isNotRecording(Map<String, Object> response) {
+        String msg = extractMessage(response).toLowerCase();
+        return msg.contains("not recording");
+    }
+
+    private boolean isStreamNotFound(Map<String, Object> response) {
+        String msg = extractMessage(response).toLowerCase();
+        return msg.contains("can not find the stream") || msg.contains("stream not found");
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean extractRecordingFlag(Map<String, Object> response) {
+        if (response == null) {
+            return false;
+        }
+        Object top = response.get("status");
+        if (top != null) {
+            return asBoolean(top);
+        }
+        Object dataObj = response.get("data");
+        if (dataObj instanceof Map<?, ?> raw) {
+            Map<String, Object> data = (Map<String, Object>) raw;
+            Object nested = data.get("status");
+            if (nested == null) {
+                nested = data.get("recording");
+            }
+            if (nested == null) {
+                nested = data.get("isRecording");
+            }
+            if (nested != null) {
+                return asBoolean(nested);
+            }
+        }
+        if (dataObj != null) {
+            return asBoolean(dataObj);
+        }
+        return false;
+    }
+
+    private boolean asBoolean(Object value) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof Number number) {
+            return number.intValue() != 0;
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isEmpty()) {
+            return false;
+        }
+        if ("true".equalsIgnoreCase(text) || "yes".equalsIgnoreCase(text)) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(text) || "no".equalsIgnoreCase(text)) {
+            return false;
+        }
+        try {
+            return Integer.parseInt(text) != 0;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
     }
 
     private Integer extractCode(Map<String, Object> response) {

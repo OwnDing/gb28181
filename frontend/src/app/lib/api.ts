@@ -258,6 +258,28 @@ export type RecordFileItem = {
   createdAt: string;
 };
 
+export type BackgroundRecordingStatus = {
+  devicePk: number;
+  deviceId: string;
+  deviceName: string;
+  deviceOnline: boolean;
+  channelId: string;
+  channelName: string;
+  channelCodec: "H264" | "H265";
+  targetRecording: boolean;
+  managedByScheduler: boolean;
+  sessionActive: boolean;
+  streamReady: boolean;
+  recordingEnabled: boolean;
+  recording: boolean;
+  backgroundPinned: boolean;
+  viewerCount: number;
+  app?: string | null;
+  streamId?: string | null;
+  lastError?: string | null;
+  updatedAt?: string | null;
+};
+
 export const authApi = {
   login: (payload: AuthLoginRequest) =>
     apiFetch<AuthLoginResponse>("/api/auth/login", {
@@ -403,6 +425,8 @@ export const storageApi = {
     apiFetch<StorageUsage>("/api/storage/cleanup", {
       method: "POST",
     }),
+  backgroundStatus: () =>
+    apiFetch<BackgroundRecordingStatus[]>("/api/storage/background-recording/status"),
   records: () => apiFetch<RecordFileItem[]>("/api/records"),
   deleteRecord: (id: number) =>
     apiFetch<void>(`/api/records/${id}`, {

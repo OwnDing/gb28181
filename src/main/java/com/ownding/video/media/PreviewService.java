@@ -6,10 +6,15 @@ import com.ownding.video.device.Device;
 import com.ownding.video.device.DeviceChannel;
 import com.ownding.video.device.DeviceService;
 import com.ownding.video.gb28181.SipSignalService;
+import com.ownding.video.storage.StoragePolicy;
+import com.ownding.video.storage.StorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.net.Inet4Address;
@@ -34,13 +39,15 @@ public class PreviewService {
     private final DeviceService deviceService;
     private final ZlmClient zlmClient;
     private final SipSignalService sipSignalService;
+    private final StorageService storageService;
     private final AppProperties appProperties;
 
     public PreviewService(DeviceService deviceService, ZlmClient zlmClient, SipSignalService sipSignalService,
-            AppProperties appProperties) {
+            StorageService storageService, AppProperties appProperties) {
         this.deviceService = deviceService;
         this.zlmClient = zlmClient;
         this.sipSignalService = sipSignalService;
+        this.storageService = storageService;
         this.appProperties = appProperties;
     }
 
@@ -51,6 +58,8 @@ public class PreviewService {
         }
         DeviceChannel channel = deviceService.resolveChannel(device.id(), command.channelId());
         String codec = normalizeCodec(channel.codec());
+        StoragePolicy storagePolicy = storageService.getPolicy();
+        RecordingConfig recordingConfig = resolveRecordingConfig(storagePolicy, device, channel);
 
         String sessionKey = buildSessionKey(device.id(), channel.channelId());
         String app = appProperties.getZlm().getDefaultApp();
@@ -73,6 +82,9 @@ public class PreviewService {
                         current.sessionId, current.streamId);
                 sessionById.remove(current.sessionId);
                 sessionByKey.remove(current.sessionKey);
+                if (current.recordingEnabled) {
+                    zlmClient.stopMp4Record(current.app, current.streamId);
+                }
                 sipSignalService.bye(current.sipCallId);
                 zlmClient.closeRtpServer(current.streamId);
             }
@@ -174,6 +186,19 @@ public class PreviewService {
             log.info("preview stream ready. deviceId={}, channelId={}, streamId={}, codec={}",
                     device.deviceId(), inviteChannelId, streamId, finalCodec);
 
+            if (recordingConfig.enabled()) {
+                boolean recordingStarted = zlmClient.startMp4Record(app, streamId, recordingConfig.zlmRecordPath());
+                boolean recordingActive = recordingStarted && waitRecordingStarted(app, streamId, Duration.ofSeconds(3));
+                if (!recordingActive) {
+                    sipSignalService.bye(inviteResult.callId());
+                    zlmClient.closeRtpServer(streamId);
+                    throw new ApiException(502, "录像已开启，但启动录像失败，请检查 ZLMediaKit 录制配置");
+                }
+                log.info("preview recording started. deviceId={}, channelId={}, streamId={}, zlmPath={}, localPath={}",
+                        device.deviceId(), channel.channelId(), streamId,
+                        recordingConfig.zlmRecordPath(), recordingConfig.localRecordPath());
+            }
+
             PlayUrls urls = zlmClient.buildPlayUrls(app, streamId);
 
             String protocol = resolveProtocol(command.protocol());
@@ -199,6 +224,8 @@ public class PreviewService {
                     ssrc,
                     inviteResult.callId(),
                     rtpPort,
+                    recordingConfig.enabled(),
+                    recordingConfig.zlmRecordPath(),
                     new AtomicInteger(1),
                     now,
                     now);
@@ -209,13 +236,69 @@ public class PreviewService {
         }
     }
 
+    public void ensureBackgroundRecording(long devicePk, String channelId) {
+        String sessionKey = buildSessionKey(devicePk, channelId);
+        SessionHolder existing = sessionByKey.get(sessionKey);
+        if (existing != null && zlmClient.isStreamReady(existing.app, existing.streamId)) {
+            if (!existing.recordingEnabled) {
+                Device device = deviceService.getDevice(devicePk);
+                DeviceChannel channel = deviceService.resolveChannel(devicePk, channelId);
+                RecordingConfig recordingConfig = resolveRecordingConfig(storageService.getPolicy(), device, channel);
+                if (recordingConfig.enabled()) {
+                    boolean started = zlmClient.startMp4Record(existing.app, existing.streamId, recordingConfig.zlmRecordPath());
+                    boolean active = started && waitRecordingStarted(existing.app, existing.streamId, Duration.ofSeconds(3));
+                    if (!active) {
+                        throw new ApiException(502, "后台补开录像失败");
+                    }
+                    existing.recordingEnabled = true;
+                    existing.recordPath = recordingConfig.zlmRecordPath();
+                }
+            }
+            existing.backgroundPinned = true;
+            existing.updatedAt = Instant.now().toString();
+            return;
+        }
+
+        StartPreviewResult result = startPreview(new StartPreviewCommand(
+                devicePk,
+                channelId,
+                "WEBRTC",
+                true
+        ));
+        synchronized (this) {
+            SessionHolder holder = sessionById.get(result.sessionId());
+            if (holder == null) {
+                return;
+            }
+            holder.backgroundPinned = true;
+            holder.viewerCount.updateAndGet(value -> value > 0 ? value - 1 : 0);
+            holder.updatedAt = Instant.now().toString();
+        }
+    }
+
+    public void releaseBackgroundRecording(long devicePk, String channelId) {
+        String sessionKey = buildSessionKey(devicePk, channelId);
+        synchronized (this) {
+            SessionHolder holder = sessionByKey.get(sessionKey);
+            if (holder == null) {
+                return;
+            }
+            holder.backgroundPinned = false;
+            if (holder.viewerCount.get() > 0) {
+                holder.updatedAt = Instant.now().toString();
+                return;
+            }
+            closeSession(holder);
+        }
+    }
+
     public void stopPreview(String sessionId) {
         SessionHolder holder = sessionById.get(sessionId);
         if (holder == null) {
             return;
         }
-        int viewers = holder.viewerCount.decrementAndGet();
-        if (viewers > 0) {
+        int viewers = holder.viewerCount.updateAndGet(value -> value > 0 ? value - 1 : 0);
+        if (viewers > 0 || holder.backgroundPinned) {
             holder.updatedAt = Instant.now().toString();
             return;
         }
@@ -225,18 +308,16 @@ public class PreviewService {
             if (check == null) {
                 return;
             }
-            if (check.viewerCount.get() > 0) {
+            if (check.viewerCount.get() > 0 || check.backgroundPinned) {
                 return;
             }
-            sessionById.remove(sessionId);
-            sessionByKey.remove(check.sessionKey);
-            sipSignalService.bye(check.sipCallId);
-            zlmClient.closeRtpServer(check.streamId);
+            closeSession(check);
         }
     }
 
     public List<SessionStatus> listSessions() {
         return sessionById.values().stream()
+                .filter(holder -> holder.viewerCount.get() > 0)
                 .map(holder -> new SessionStatus(
                         holder.sessionId,
                         holder.devicePk,
@@ -250,6 +331,29 @@ public class PreviewService {
                         holder.updatedAt))
                 .sorted((a, b) -> b.startedAt().compareTo(a.startedAt()))
                 .toList();
+    }
+
+    public Optional<ChannelRuntime> findChannelRuntime(long devicePk, String channelId) {
+        SessionHolder holder = sessionByKey.get(buildSessionKey(devicePk, channelId));
+        if (holder == null) {
+            return Optional.empty();
+        }
+        boolean streamReady = zlmClient.isStreamReady(holder.app, holder.streamId);
+        boolean recording = holder.recordingEnabled && zlmClient.isMp4Recording(holder.app, holder.streamId);
+        return Optional.of(new ChannelRuntime(
+                holder.devicePk,
+                holder.deviceId,
+                holder.channelId,
+                holder.app,
+                holder.streamId,
+                holder.recordingEnabled,
+                recording,
+                streamReady,
+                holder.backgroundPinned,
+                holder.viewerCount.get(),
+                holder.startedAt,
+                holder.updatedAt
+        ));
     }
 
     public WebRtcAnswer playWebRtc(String sessionId, String offerSdp) {
@@ -295,8 +399,78 @@ public class PreviewService {
         return ("ch" + channelId).replaceAll("[^A-Za-z0-9_\\-]", "");
     }
 
+    private RecordingConfig resolveRecordingConfig(StoragePolicy policy, Device device, DeviceChannel channel) {
+        if (policy == null || !policy.recordEnabled()) {
+            return new RecordingConfig(false, null, null);
+        }
+        if (policy.recordPath() == null || policy.recordPath().isBlank()) {
+            throw new ApiException(400, "录像目录未配置");
+        }
+
+        String deviceSegment = safePathSegment(device.deviceId());
+        String channelSegment = safePathSegment(channel.channelId());
+
+        Path basePath = Path.of(policy.recordPath().trim()).toAbsolutePath().normalize();
+        Path targetPath = basePath
+                .resolve(deviceSegment)
+                .resolve(channelSegment);
+        try {
+            Files.createDirectories(targetPath);
+        } catch (IOException ex) {
+            throw new ApiException(500, "无法创建录像目录: " + ex.getMessage());
+        }
+        String localPath = targetPath.toString().replace('\\', '/');
+        String zlmPath = buildZlmRecordPath(localPath, deviceSegment, channelSegment);
+        return new RecordingConfig(true, localPath, zlmPath);
+    }
+
+    private String safePathSegment(String value) {
+        if (value == null || value.isBlank()) {
+            return "unknown";
+        }
+        return value.trim().replaceAll("[\\\\/:*?\"<>|\\s]+", "_");
+    }
+
+    private String buildZlmRecordPath(String fallbackLocalPath, String deviceSegment, String channelSegment) {
+        String configured = appProperties.getStorage().getZlmRecordPath();
+        if (configured == null || configured.isBlank()) {
+            return fallbackLocalPath;
+        }
+        String normalizedBase = configured.trim().replace('\\', '/').replaceAll("/+$", "");
+        if (normalizedBase.isBlank()) {
+            return fallbackLocalPath;
+        }
+        return normalizedBase + "/" + deviceSegment + "/" + channelSegment;
+    }
+
     private String randomSessionId() {
         return java.util.UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private void closeSession(SessionHolder holder) {
+        sessionById.remove(holder.sessionId);
+        sessionByKey.remove(holder.sessionKey);
+        if (holder.recordingEnabled) {
+            zlmClient.stopMp4Record(holder.app, holder.streamId);
+        }
+        sipSignalService.bye(holder.sipCallId);
+        zlmClient.closeRtpServer(holder.streamId);
+    }
+
+    private boolean waitRecordingStarted(String app, String streamId, Duration timeout) {
+        Instant deadline = Instant.now().plus(timeout);
+        while (Instant.now().isBefore(deadline)) {
+            if (zlmClient.isMp4Recording(app, streamId)) {
+                return true;
+            }
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return zlmClient.isMp4Recording(app, streamId);
     }
 
     private int resolveStreamMode(String transport) {
@@ -575,6 +749,21 @@ public class PreviewService {
             String updatedAt) {
     }
 
+    public record ChannelRuntime(
+            long devicePk,
+            String deviceId,
+            String channelId,
+            String app,
+            String streamId,
+            boolean recordingEnabled,
+            boolean recording,
+            boolean streamReady,
+            boolean backgroundPinned,
+            int viewerCount,
+            String startedAt,
+            String updatedAt) {
+    }
+
     public record WebRtcAnswer(
             String type,
             String sdp) {
@@ -586,6 +775,12 @@ public class PreviewService {
             String httpFlvUrl,
             String rtspUrl,
             String rtmpUrl) {
+    }
+
+    private record RecordingConfig(
+            boolean enabled,
+            String localRecordPath,
+            String zlmRecordPath) {
     }
 
     private static class SessionHolder {
@@ -603,9 +798,12 @@ public class PreviewService {
         private final String ssrc;
         private final String sipCallId;
         private final Integer rtpPort;
+        private volatile boolean recordingEnabled;
+        private volatile String recordPath;
         private final AtomicInteger viewerCount;
         private final String startedAt;
         private volatile String updatedAt;
+        private volatile boolean backgroundPinned;
 
         private SessionHolder(
                 String sessionId,
@@ -622,6 +820,8 @@ public class PreviewService {
                 String ssrc,
                 String sipCallId,
                 Integer rtpPort,
+                boolean recordingEnabled,
+                String recordPath,
                 AtomicInteger viewerCount,
                 String startedAt,
                 String updatedAt) {
@@ -639,9 +839,12 @@ public class PreviewService {
             this.ssrc = ssrc;
             this.sipCallId = sipCallId;
             this.rtpPort = rtpPort;
+            this.recordingEnabled = recordingEnabled;
+            this.recordPath = recordPath;
             this.viewerCount = viewerCount;
             this.startedAt = startedAt;
             this.updatedAt = updatedAt;
+            this.backgroundPinned = false;
         }
     }
 }

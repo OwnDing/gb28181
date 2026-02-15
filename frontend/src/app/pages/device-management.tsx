@@ -35,7 +35,13 @@ import {
 } from "../components/ui/select";
 import { Plus, Pencil, Trash2, Power } from "lucide-react";
 import { toast } from "sonner";
-import { deviceApi, type Device, type DeviceRequest } from "../lib/api";
+import {
+  deviceApi,
+  storageApi,
+  type BackgroundRecordingStatus,
+  type Device,
+  type DeviceRequest,
+} from "../lib/api";
 
 type DeviceForm = {
   name: string;
@@ -82,8 +88,45 @@ function validatePayload(payload: DeviceRequest): string | null {
   return null;
 }
 
+type DeviceRecordingSummary = {
+  targetRecording: boolean;
+  recordingChannels: number;
+  totalChannels: number;
+  hasError: boolean;
+  errorMessage?: string;
+};
+
+function buildRecordingSummary(
+  statuses: BackgroundRecordingStatus[],
+): Record<number, DeviceRecordingSummary> {
+  const result: Record<number, DeviceRecordingSummary> = {};
+  for (const item of statuses) {
+    const current = result[item.devicePk] ?? {
+      targetRecording: false,
+      recordingChannels: 0,
+      totalChannels: 0,
+      hasError: false,
+      errorMessage: undefined,
+    };
+    current.targetRecording = current.targetRecording || item.targetRecording;
+    current.totalChannels += 1;
+    if (item.recording) {
+      current.recordingChannels += 1;
+    }
+    if (item.lastError) {
+      current.hasError = true;
+      if (!current.errorMessage) {
+        current.errorMessage = `[${item.channelId}] ${item.lastError}`;
+      }
+    }
+    result[item.devicePk] = current;
+  }
+  return result;
+}
+
 export default function DeviceManagement() {
   const [devices, setDevices] = useState<Device[]>([]);
+  const [recordingSummaryMap, setRecordingSummaryMap] = useState<Record<number, DeviceRecordingSummary>>({});
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
@@ -101,8 +144,12 @@ export default function DeviceManagement() {
       if (!silent) {
         setLoading(true);
       }
-      const list = await deviceApi.list();
+      const [list, statuses] = await Promise.all([
+        deviceApi.list(),
+        storageApi.backgroundStatus().catch(() => [] as BackgroundRecordingStatus[]),
+      ]);
       setDevices(list);
+      setRecordingSummaryMap(buildRecordingSummary(statuses));
     } catch (error) {
       if (!silent) {
         toast.error(error instanceof Error ? error.message : "设备加载失败");
@@ -242,6 +289,7 @@ export default function DeviceManagement() {
                 <TableHead>通道数</TableHead>
                 <TableHead>制造商</TableHead>
                 <TableHead>编码</TableHead>
+                <TableHead>录制状态</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead>最后心跳</TableHead>
                 <TableHead className="text-right">操作</TableHead>
@@ -250,13 +298,13 @@ export default function DeviceManagement() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="text-center text-slate-500 py-8">
+                  <TableCell colSpan={11} className="text-center text-slate-500 py-8">
                     正在加载...
                   </TableCell>
                 </TableRow>
               ) : devices.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="text-center text-slate-500 py-8">
+                  <TableCell colSpan={11} className="text-center text-slate-500 py-8">
                     暂无设备，请点击"注册设备"添加
                   </TableCell>
                 </TableRow>
@@ -270,6 +318,29 @@ export default function DeviceManagement() {
                     <TableCell>{device.channelCount}</TableCell>
                     <TableCell>{device.manufacturer}</TableCell>
                     <TableCell>{device.preferredCodec}</TableCell>
+                    <TableCell>
+                      {(() => {
+                        const summary = recordingSummaryMap[device.id];
+                        if (!summary || !summary.targetRecording) {
+                          return <Badge variant="secondary">未录制</Badge>;
+                        }
+                        if (summary.recordingChannels > 0) {
+                          return (
+                            <Badge variant="default">
+                              录制中 {summary.recordingChannels}/{summary.totalChannels}
+                            </Badge>
+                          );
+                        }
+                        if (summary.hasError) {
+                          return (
+                            <Badge variant="destructive" title={summary.errorMessage}>
+                              录制异常
+                            </Badge>
+                          );
+                        }
+                        return <Badge variant="secondary">待启动</Badge>;
+                      })()}
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant={device.online ? "default" : "secondary"}
