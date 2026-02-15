@@ -1,8 +1,10 @@
 package com.ownding.video.media;
 
+import com.ownding.video.common.ApiException;
 import com.ownding.video.config.AppProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -137,9 +139,52 @@ public class ZlmClient {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    public PreviewService.WebRtcAnswer playWebRtc(String app, String streamId, String offerSdp) {
+        try {
+            String baseUrl = trimTrailingSlash(appProperties.getZlm().getBaseUrl());
+            UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(baseUrl)
+                    .path("/index/api/webrtc")
+                    .queryParam("secret", appProperties.getZlm().getSecret())
+                    .queryParam("app", app)
+                    .queryParam("stream", streamId)
+                    .queryParam("type", "play");
+
+            Map<String, Object> response = webClient.post()
+                    .uri(uriBuilder.build(true).toUri())
+                    .contentType(MediaType.TEXT_PLAIN)
+                    .bodyValue(offerSdp)
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block(Duration.ofSeconds(5));
+            if (response == null) {
+                throw new ApiException(502, "ZLMediaKit WebRTC 返回为空");
+            }
+            Number code = (Number) response.get("code");
+            if (code == null || code.intValue() != 0) {
+                String msg = extractMessage(response);
+                throw new ApiException(502, "ZLMediaKit WebRTC信令失败: " + msg);
+            }
+
+            String answerSdp = extractString(response, "sdp", "answer");
+            if (answerSdp == null || answerSdp.isBlank()) {
+                throw new ApiException(502, "ZLMediaKit WebRTC 未返回 answer SDP");
+            }
+            String answerType = extractString(response, "type");
+            if (answerType == null || answerType.isBlank()) {
+                answerType = "answer";
+            }
+            return new PreviewService.WebRtcAnswer(answerType, answerSdp);
+        } catch (ApiException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new ApiException(502, "ZLMediaKit WebRTC信令异常: " + ex.getMessage());
+        }
+    }
+
     public PreviewService.PlayUrls buildPlayUrls(String app, String streamId) {
         String base = trimTrailingSlash(appProperties.getZlm().getPublicBaseUrl());
-        String webrtcPlayerUrl = "%s/index/webrtc.html?app=%s&stream=%s".formatted(base, app, streamId);
+        String webrtcPlayerUrl = "%s/index/api/webrtc?app=%s&stream=%s&type=play".formatted(base, app, streamId);
         String hlsUrl = "%s/%s/%s/hls.m3u8".formatted(base, app, streamId);
         String httpFlvUrl = "%s/%s/%s.live.flv".formatted(base, app, streamId);
         String rtmpUrl = toRtmp(base, app, streamId);
@@ -162,5 +207,37 @@ public class ZlmClient {
     private String toRtmp(String base, String app, String streamId) {
         String host = base.replace("http://", "").replace("https://", "");
         return "rtmp://%s/%s/%s".formatted(host, app, streamId);
+    }
+
+    private String extractMessage(Map<String, Object> response) {
+        Object msg = response.get("msg");
+        if (msg == null || String.valueOf(msg).isBlank()) {
+            msg = response.get("message");
+        }
+        if (msg == null) {
+            return "unknown";
+        }
+        return String.valueOf(msg);
+    }
+
+    @SuppressWarnings("unchecked")
+    private String extractString(Map<String, Object> response, String... keys) {
+        for (String key : keys) {
+            Object top = response.get(key);
+            if (top != null && !String.valueOf(top).isBlank()) {
+                return String.valueOf(top);
+            }
+        }
+        Object dataObj = response.get("data");
+        if (dataObj instanceof Map<?, ?> dataMap) {
+            Map<String, Object> data = (Map<String, Object>) dataMap;
+            for (String key : keys) {
+                Object nested = data.get(key);
+                if (nested != null && !String.valueOf(nested).isBlank()) {
+                    return String.valueOf(nested);
+                }
+            }
+        }
+        return null;
     }
 }

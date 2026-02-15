@@ -49,6 +49,15 @@ public class PreviewController {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    @PostMapping("/webrtc/play")
+    public Mono<ApiResult<PreviewService.WebRtcAnswer>> playWebRtc(@Valid @RequestBody WebRtcPlayRequest request) {
+        return Mono.fromCallable(() -> ApiResult.success(previewService.playWebRtc(
+                        request.sessionId(),
+                        request.offerSdp()
+                )))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
     public record StartRequest(
             long devicePk,
             String channelId,
@@ -58,5 +67,11 @@ public class PreviewController {
     }
 
     public record StopRequest(@NotBlank(message = "不能为空") String sessionId) {
+    }
+
+    public record WebRtcPlayRequest(
+            @NotBlank(message = "不能为空") String sessionId,
+            @NotBlank(message = "不能为空") String offerSdp
+    ) {
     }
 }

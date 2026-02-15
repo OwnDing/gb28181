@@ -39,6 +39,120 @@ function supportsH265Browser() {
   return hevcChecks.some((item) => video.canPlayType(item) !== "");
 }
 
+function waitForIceGatheringComplete(peer: RTCPeerConnection, timeoutMs = 3000) {
+  if (peer.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      window.clearTimeout(timer);
+      peer.removeEventListener("icegatheringstatechange", onStateChange);
+      resolve();
+    };
+    const onStateChange = () => {
+      if (peer.iceGatheringState === "complete") {
+        done();
+      }
+    };
+    const timer = window.setTimeout(done, timeoutMs);
+    peer.addEventListener("icegatheringstatechange", onStateChange);
+  });
+}
+
+function WebRtcPlayer({ sessionId }: { sessionId: string }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const peerRef = useRef<RTCPeerConnection | null>(null);
+  const [errorText, setErrorText] = useState<string>("");
+
+  useEffect(() => {
+    let disposed = false;
+
+    if (typeof RTCPeerConnection === "undefined") {
+      setErrorText("当前浏览器不支持 WebRTC");
+      return;
+    }
+
+    const peer = new RTCPeerConnection({ iceServers: [] });
+    peerRef.current = peer;
+    let fallbackStream: MediaStream | null = null;
+
+    peer.ontrack = (event) => {
+      if (disposed || !videoRef.current) {
+        return;
+      }
+      if (event.streams && event.streams.length > 0) {
+        videoRef.current.srcObject = event.streams[0];
+        return;
+      }
+      if (!fallbackStream) {
+        fallbackStream = new MediaStream();
+      }
+      fallbackStream.addTrack(event.track);
+      videoRef.current.srcObject = fallbackStream;
+    };
+
+    const start = async () => {
+      setErrorText("");
+      peer.addTransceiver("video", { direction: "recvonly" });
+      peer.addTransceiver("audio", { direction: "recvonly" });
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      await waitForIceGatheringComplete(peer, 3000);
+      const offerSdp = peer.localDescription?.sdp;
+      if (!offerSdp) {
+        throw new Error("未能生成本地 SDP");
+      }
+
+      const answer = await previewApi.webrtcPlay({
+        sessionId,
+        offerSdp,
+      });
+      if (disposed) {
+        return;
+      }
+
+      await peer.setRemoteDescription({
+        type: "answer",
+        sdp: answer.sdp,
+      });
+      if (videoRef.current) {
+        await videoRef.current.play().catch(() => undefined);
+      }
+    };
+
+    start().catch((error) => {
+      if (disposed) {
+        return;
+      }
+      setErrorText(error instanceof Error ? error.message : "WebRTC 预览失败");
+    });
+
+    return () => {
+      disposed = true;
+      const peerConnection = peerRef.current;
+      peerRef.current = null;
+      if (peerConnection) {
+        peerConnection.ontrack = null;
+        peerConnection.close();
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, [sessionId]);
+
+  return (
+    <div className="w-full h-full relative">
+      <video ref={videoRef} className="w-full h-full" autoPlay playsInline muted />
+      {errorText ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80 px-4 text-sm text-slate-200 text-center">
+          {errorText}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function VideoPreview() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [channels, setChannels] = useState<DeviceChannel[]>([]);
@@ -265,12 +379,7 @@ export default function VideoPreview() {
                   <div key={item.sessionId} className="space-y-2">
                     <div className="relative bg-slate-900 rounded-lg overflow-hidden aspect-video">
                       {item.protocol === "WEBRTC" ? (
-                        <iframe
-                          title={`zlm-player-${item.sessionId}`}
-                          src={item.webrtcPlayerUrl}
-                          className="w-full h-full border-0"
-                          allow="autoplay; fullscreen"
-                        />
+                        <WebRtcPlayer sessionId={item.sessionId} />
                       ) : (
                         <video src={item.playUrl} className="w-full h-full" autoPlay controls muted />
                       )}
@@ -286,7 +395,9 @@ export default function VideoPreview() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => window.open(item.playUrl, "_blank")}
+                          onClick={() =>
+                            window.open(item.protocol === "WEBRTC" ? item.hlsUrl : item.playUrl, "_blank")
+                          }
                         >
                           <Link2 className="w-4 h-4" />
                         </Button>

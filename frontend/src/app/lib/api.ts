@@ -102,6 +102,16 @@ export type PreviewSessionStatus = {
   updatedAt: string;
 };
 
+export type PreviewWebRtcPlayRequest = {
+  sessionId: string;
+  offerSdp: string;
+};
+
+export type PreviewWebRtcPlayResponse = {
+  type: string;
+  sdp: string;
+};
+
 export type SipCommandResult = {
   success: boolean;
   callId?: string | null;
@@ -297,6 +307,11 @@ export const previewApi = {
       body: JSON.stringify({ sessionId }),
     }),
   status: () => apiFetch<PreviewSessionStatus[]>("/api/preview/status"),
+  webrtcPlay: (payload: PreviewWebRtcPlayRequest) =>
+    apiFetch<PreviewWebRtcPlayResponse>("/api/preview/webrtc/play", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
 
 export const gb28181Api = {

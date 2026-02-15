@@ -236,6 +236,19 @@ public class PreviewService {
                 .toList();
     }
 
+    public WebRtcAnswer playWebRtc(String sessionId, String offerSdp) {
+        SessionHolder holder = sessionById.get(sessionId);
+        if (holder == null) {
+            throw new ApiException(404, "预览会话不存在或已结束");
+        }
+        if (!zlmClient.isStreamReady(holder.app, holder.streamId)) {
+            throw new ApiException(409, "流未就绪，请重新发起预览");
+        }
+        WebRtcAnswer answer = zlmClient.playWebRtc(holder.app, holder.streamId, offerSdp);
+        holder.updatedAt = Instant.now().toString();
+        return answer;
+    }
+
     private StartPreviewResult toStartResult(SessionHolder holder, int viewers, boolean created, String message) {
         return new StartPreviewResult(
                 holder.sessionId,
@@ -530,6 +543,11 @@ public class PreviewService {
             int viewerCount,
             String startedAt,
             String updatedAt) {
+    }
+
+    public record WebRtcAnswer(
+            String type,
+            String sdp) {
     }
 
     public record PlayUrls(
