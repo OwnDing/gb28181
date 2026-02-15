@@ -24,6 +24,7 @@ import {
   type DeviceChannel,
   type PreviewStartResponse,
 } from "../lib/api";
+import JessibucaPlayer from "../components/JessibucaPlayer";
 
 type PreviewProtocol = "WEBRTC" | "HLS" | "HTTP_FLV";
 
@@ -378,21 +379,35 @@ export default function VideoPreview() {
               </div>
             ) : (
               <div
-                className={`grid gap-4 ${
-                  sessions.length === 1
-                    ? "grid-cols-1"
-                    : sessions.length <= 4
-                      ? "grid-cols-1 md:grid-cols-2"
-                      : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
-                }`}
+                className={`grid gap-4 ${sessions.length === 1
+                  ? "grid-cols-1"
+                  : sessions.length <= 4
+                    ? "grid-cols-1 md:grid-cols-2"
+                    : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
+                  }`}
               >
                 {sessions.map((item) => (
                   <div key={item.sessionId} className="space-y-2">
                     <div className="relative bg-slate-900 rounded-lg overflow-hidden aspect-video">
                       {item.protocol === "WEBRTC" ? (
-                        <WebRtcPlayer sessionId={item.sessionId} />
+                        <div className="w-full h-full relative">
+                          <WebRtcPlayer sessionId={item.sessionId} />
+                          {!browserSupportsH265 && (item.codec === "h265" || item.codec === "H265") ? (
+                            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white p-4 text-center">
+                              <p className="text-red-400 font-bold mb-2">不支持的播放协议</p>
+                              <p className="text-sm text-slate-300">
+                                当前浏览器不支持通过 WebRTC 播放 H.265 视频。<br />
+                                请切换到 HTTP-FLV 协议。
+                              </p>
+                            </div>
+                          ) : null}
+                        </div>
                       ) : (
-                        <video src={item.playUrl} className="w-full h-full" autoPlay controls muted />
+                        <JessibucaPlayer
+                          url={item.playUrl}
+                          className="w-full h-full"
+                          isH265={item.codec === "h265" || item.codec === "H265"}
+                        />
                       )}
                     </div>
                     <div className="flex items-center justify-between gap-2">
