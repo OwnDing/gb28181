@@ -21,15 +21,15 @@ The system consists of four core components:
 
 ```mermaid
 graph TD
-    Camera[IPC / NVR (GB28181)] <-->|SIP| Backend(Java Backend)
-    Camera -->|RTP/UDP/TCP| ZLM(ZLMediaKit)
+    Camera["IPC / NVR (GB28181)"] <-->|SIP| Backend("Java Backend")
+    Camera -->|RTP/UDP/TCP| ZLM("ZLMediaKit")
     
-    User[Web Browser] <-->|HTTP/WebSocket| Frontend(React Frontend)
+    User["Web Browser"] <-->|HTTP/WebSocket| Frontend("React Frontend")
     Frontend <-->|API| Backend
     Frontend <-->|WebRTC/FLV/HLS| ZLM
     
     Backend <-->|API| ZLM
-    Backend <-->|API| AI(AI Service)
+    Backend <-->|API| AI("AI Service")
     
     AI -->|RTSP| ZLM
     AI -->|Alarm API| Backend
