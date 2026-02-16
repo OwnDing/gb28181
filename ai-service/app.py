@@ -3,6 +3,8 @@ import os
 import time
 import requests
 import torch
+from PIL import Image
+from io import BytesIO
 # Monkeypatch torch.load to disable weights_only=True default in PyTorch 2.6+
 # This is required because we are using a complex model structure (YOLOv8) 
 # and we trust the source (ultralytics assets).
@@ -102,28 +104,41 @@ def get_channels():
             for device in devices:
                  # Ensure we have active channels. This API might need adjustment depending on actual response structure
                  # Assuming device has 'deviceId' and we can try to look at its channels
+                 logger.info(f"Checking device: {device}")
                  is_online = device.get('online', False)
                  logger.info(f"Device {device.get('deviceId')} online status: {is_online}")
                  
                  if is_online:
                      # Fetch channels for this device
-                     c_url = f"{JAVA_API_HOST}/api/devices/{device['deviceId']}/channels"
-                     c_resp = requests.get(c_url, headers=headers, timeout=5)
-                     if c_resp.status_code == 200:
-                         c_result = c_resp.json()
-                         if isinstance(c_result, dict) and "data" in c_result:
-                             dev_channels = c_result["data"]
-                         else:
-                             dev_channels = c_result
-                             
-                         logger.info(f"Device {device.get('deviceId')} has {len(dev_channels)} channels")
-                         for ch in dev_channels:
-                             # We only care about channels that are pushing stream? 
-                             # For now, take all channels, or maybe filter by status if available
-                             channels.append({
-                                 "deviceId": device['deviceId'],
-                                 "channelId": ch['channelId']
-                             })
+                     # IMPORTANT: The API expects the database ID (long), not the GB28181 deviceId string
+                     dev_db_id = device.get('id')
+                     c_url = f"{JAVA_API_HOST}/api/devices/{dev_db_id}/channels"
+                     try:
+                        c_resp = requests.get(c_url, headers=headers, timeout=5)
+                        if c_resp.status_code == 200:
+                            c_result = c_resp.json()
+                            if isinstance(c_result, dict) and "data" in c_result:
+                                dev_channels = c_result["data"]
+                            else:
+                                dev_channels = c_result
+                                
+                            logger.info(f"Device {device.get('deviceId')} channels resp: {dev_channels}") # LOG CONTENT
+                            
+                            if not dev_channels:
+                                dev_channels = []
+
+                            logger.info(f"Device {device.get('deviceId')} has {len(dev_channels)} channels")
+                            for ch in dev_channels:
+                                # We only care about channels that are pushing stream? 
+                                # For now, take all channels, or maybe filter by status if available
+                                channels.append({
+                                    "deviceId": device['deviceId'],
+                                    "channelId": ch['channelId']
+                                })
+                        else:
+                            logger.error(f"Failed to fetch channels for {device.get('deviceId')}. Status: {c_resp.status_code}, Body: {c_resp.text}")
+                     except Exception as e:
+                         logger.error(f"Exc fetching channels for {device.get('deviceId')}: {e}")
             logger.info(f"Total active channels found: {len(channels)}")
             return channels
         else:
@@ -200,39 +215,42 @@ def check_channel(device_id, channel_id, model):
             image_data = resp.content
             
             # Run Inference
-            results = model(image_data, verbose=False) # YOLOv8 supports PIL/bytes? 
-            # We might need to wrap bytes in PIL Image
-            from PIL import Image
-            import io
-            img = Image.open(io.BytesIO(image_data))
-            
-            results = model(img, verbose=False)
-            
-            # Check for persons
-            person_detected = False
-            for r in results:
-                for box in r.boxes:
-                    cls_id = int(box.cls[0])
-                    conf = float(box.conf[0])
-                    if model.names[cls_id] == 'person' and conf > CONFIDENCE_THRESHOLD:
-                        person_detected = True
-                        break
-            
-            if person_detected:
-                logger.info(f"Person detected on {device_id}/{channel_id}!")
+            try:
+                img = Image.open(BytesIO(image_data))
                 
-                # Notify Backend
-                # We need to send the image data to the backend to save it.
-                files = {'file': ('snapshot.jpg', image_data, 'image/jpeg')}
-                data = {
-                    'deviceId': device_id,
-                    'channelId': channel_id,
-                    'timestamp': int(time.time() * 1000)
-                }
-                requests.post(f"{JAVA_API_HOST}/api/alarms", data=data, files=files)
+                # Check image validity
+                img.verify() # Verify it's an image
+                img = Image.open(BytesIO(image_data)) # Re-open because verify() consumes it
                 
-                # Sleep a bit to avoid flooding for this channel
-                time.sleep(5)
+                results = model(img, verbose=False)
+                
+                # Check for persons
+                person_detected = False
+                for r in results:
+                    for box in r.boxes:
+                        cls_id = int(box.cls[0])
+                        conf = float(box.conf[0])
+                        if model.names[cls_id] == 'person' and conf > CONFIDENCE_THRESHOLD:
+                            person_detected = True
+                            break
+                            
+                if person_detected:
+                    logger.info(f"Person detected on {device_id}/{channel_id}!")
+                    
+                    # Notify Backend
+                    files = {'file': ('snapshot.jpg', image_data, 'image/jpeg')}
+                    data = {
+                        'deviceId': device_id,
+                        'channelId': channel_id,
+                        'timestamp': int(time.time() * 1000)
+                    }
+                    requests.post(f"{JAVA_API_HOST}/api/alarms", data=data, files=files)
+                    
+                    # Sleep a bit to avoid flooding for this channel
+                    time.sleep(5)
+
+            except Exception as ex:
+                logger.error(f"Image processing error for {device_id}/{channel_id}: {ex}")
                 
         else:
             # logger.debug(f"No snapshot available for {channel_id}")
