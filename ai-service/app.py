@@ -2,6 +2,18 @@ import logging
 import os
 import time
 import requests
+import torch
+# Monkeypatch torch.load to disable weights_only=True default in PyTorch 2.6+
+# This is required because we are using a complex model structure (YOLOv8) 
+# and we trust the source (ultralytics assets).
+_original_torch_load = torch.load
+def patched_torch_load(*args, **kwargs):
+    # Force weights_only=False if not explicitly set
+    if 'weights_only' not in kwargs:
+        kwargs['weights_only'] = False
+    return _original_torch_load(*args, **kwargs)
+torch.load = patched_torch_load
+
 from ultralytics import YOLO
 
 # Configuration
