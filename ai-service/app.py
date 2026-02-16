@@ -5,6 +5,7 @@ import requests
 import torch
 from PIL import Image
 from io import BytesIO
+import cv2
 # Monkeypatch torch.load to disable weights_only=True default in PyTorch 2.6+
 # This is required because we are using a complex model structure (YOLOv8) 
 # and we trust the source (ultralytics assets).
@@ -164,15 +165,54 @@ def check_channel(device_id, channel_id, model):
     # Construct stream app/id. 
     # In GB28181 implementation, usually app="rtp", stream=deviceId_channelId (or just channelId depending on mapping)
     # Let's assume app="rtp" and streamId=channelId for now, need to verify with Java logic.
+    # Construct stream app/id. 
+    # In GB28181 implementation, usually app="rtp", stream=deviceId_channelId (or just channelId depending on mapping)
     app = "rtp"
-    stream_id = f"{channel_id}" 
+    
+    # Resolve stream_id from ZLM
+    # We query getMediaList to find the actual stream name for this channel
+    # The stream name might be 'ch' + channelId or just channelId or ssrc
+    # We look for a stream that contains the channelId
+    stream_id = None
+    try:
+        media_list_url = f"{ZLM_HOST}/index/api/getMediaList"
+        media_params = {
+            "secret": os.getenv("ZLM_SECRET", "ntModmVZiUw6arPbJiiuhfGC7FzNgWLx")
+        }
+        m_resp = requests.get(media_list_url, params=media_params, timeout=5)
+        if m_resp.status_code == 200:
+            m_data = m_resp.json()
+            if m_data.get("code") == 0 and "data" in m_data:
+                for item in m_data["data"]:
+                    if item.get("app") == app:
+                        s_id = item.get("stream", "")
+                        # Check if channel_id is part of stream_id (e.g. ch340200... or 340200...)
+                        if channel_id in s_id:
+                            stream_id = s_id
+                            logger.info(f"Using ZLM stream: {item}")
+                            if item.get("bytesSpeed", 0) == 0:
+                                logger.warning(f"Stream {stream_id} has 0 bytesSpeed! Snapshot might be empty.")
+                            break
+    except Exception as e:
+        logger.error(f"Failed to resolve stream_id from ZLM: {e}")
+        
+    if not stream_id:
+        logger.warning(f"Stream not found in ZLM for channel {channel_id}. Using default.")
+        stream_id = f"{channel_id}" # Fallback
+    else:
+        logger.info(f"Resolved ZLM stream_id: {stream_id} for channel {channel_id}")
     
     # We use the static snapshot URL provided by ZLM if 'snapRoot' is set and auto snap is on.
     # Or we use the API to force generate/get.
     
-    # Try fetching the snapshot image directly if ZLM exposes it
-    # Default ZLM behavior: http://zlm:80/index/api/getSnap?url=rtsp://...&timeout_sec=...&expire_sec=...
-    # But connecting to API is better.
+    # Log start of check
+    logger.info(f"Checking channel: {device_id}/{channel_id}")
+    
+    snapshot_url = f"{ZLM_HOST}/index/api/getSnap"
+    # We need to know the 'stream_url' to tell ZLM what to snap.
+    # Construct a local RTSP URL for the stream
+    stream_url = f"rtsp://{RTSP_HOST}:{RTSP_HOST_PORT}/{app}/{stream_id}"
+    logger.info(f"Snapshot URL target: {stream_url}")
     
     # IMPORTANT: The Java backend knows the ZLM secret. We might need it here or pass it.
     # For now, let's assume we can access the snapshot via a public URL if configured, 
@@ -186,6 +226,9 @@ def check_channel(device_id, channel_id, model):
     # ZLM usually saves snaps at `http://zlm:80/snap/rtp/device_channel.jpg` if configured.
     # Let's try to fetch that static URL first.
     
+    # Log start of check
+    logger.info(f"Checking channel: {device_id}/{channel_id}")
+    
     snapshot_url = f"{ZLM_HOST}/index/api/getSnap"
     # We need to know the 'stream_url' to tell ZLM what to snap.
     # Construct a local RTSP URL for the stream
@@ -198,63 +241,93 @@ def check_channel(device_id, channel_id, model):
         "expire_sec": 1
     }
     
+    # Log start of check
+    logger.info(f"Checking channel: {device_id}/{channel_id}")
+    
+    # We need to know the 'stream_url' to tell ZLM what to snap.
+    # Construct a local RTSP URL for the stream
+    stream_url = f"rtsp://{RTSP_HOST}:{RTSP_HOST_PORT}/{app}/{stream_id}"
+    logger.info(f"Snapshot URL target: {stream_url}")
+    
     try:
-        # Request snapshot from ZLM
-        # This returns a JSON with {"code": 0, "data": "base64..."} OR redirects to image?
-        # ZLM getSnap API writes to file and returns success, or returns image?
-        # Actually ZLM's `getSnap` API usually generates a file and returns the path or base64.
-        # Let's use the 'scan' mode on the generated file if possible, or just download the image result.
+        # Use OpenCV to capture a frame directly from RTSP
+        # This avoids ZLM snapshot issues with H.265 or timeouts
+        cap = cv2.VideoCapture(stream_url)
         
-        # NOTE: ZLM getSnap might return the image binary directly if not configured otherwise?
-        # Let's assume we get the image bytes.
+        # Set buffer size to small to get latest frame? 
+        # Actually just read one frame.
         
-        resp = requests.get(snapshot_url, params=params, timeout=6)
+        if not cap.isOpened():
+             logger.warning(f"Failed to open RTSP stream: {stream_url}")
+             return
+
+        # Read a frame
+        ret, frame = cap.read()
+        cap.release()
         
-        if resp.status_code == 200 and resp.headers.get('Content-Type', '').startswith('image'):
-            # It's an image
-            image_data = resp.content
+        if ret and frame is not None:
+            # frame is BGR numpy array
+            # Convert to RGB for PIL
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame_rgb)
+            
+            # Save for debug
+            try:
+                debug_dir = "/data"
+                if not os.path.exists(debug_dir):
+                    os.makedirs(debug_dir)
+                
+                timestamp = int(time.time() * 1000)
+                file_path = f"{debug_dir}/{device_id}_{channel_id}_{timestamp}.jpg"
+                img.save(file_path)
+                logger.info(f"Snapshot saved to {file_path}")
+            except Exception as e:
+                logger.error(f"Failed to save debug snapshot: {e}")
             
             # Run Inference
-            try:
-                img = Image.open(BytesIO(image_data))
-                
-                # Check image validity
-                img.verify() # Verify it's an image
-                img = Image.open(BytesIO(image_data)) # Re-open because verify() consumes it
-                
-                results = model(img, verbose=False)
-                
-                # Check for persons
-                person_detected = False
-                for r in results:
-                    for box in r.boxes:
-                        cls_id = int(box.cls[0])
-                        conf = float(box.conf[0])
-                        if model.names[cls_id] == 'person' and conf > CONFIDENCE_THRESHOLD:
-                            person_detected = True
-                            break
-                            
-                if person_detected:
-                    logger.info(f"Person detected on {device_id}/{channel_id}!")
+            results = model(img, verbose=False)
+            
+            # Check for persons
+            person_detected = False
+            detected_classes = []
+            for r in results:
+                for box in r.boxes:
+                    cls_id = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    class_name = model.names[cls_id]
+                    detected_classes.append(f"{class_name}({conf:.2f})")
                     
-                    # Notify Backend
-                    files = {'file': ('snapshot.jpg', image_data, 'image/jpeg')}
-                    data = {
-                        'deviceId': device_id,
-                        'channelId': channel_id,
-                        'timestamp': int(time.time() * 1000)
-                    }
-                    requests.post(f"{JAVA_API_HOST}/api/alarms", data=data, files=files)
-                    
-                    # Sleep a bit to avoid flooding for this channel
-                    time.sleep(5)
-
-            except Exception as ex:
-                logger.error(f"Image processing error for {device_id}/{channel_id}: {ex}")
+                    if class_name == 'person' and conf > CONFIDENCE_THRESHOLD:
+                        person_detected = True
+                        
+            logger.info(f"Detection result on {device_id}/{channel_id}: {detected_classes}")
+                        
+            if person_detected:
+                logger.info(f"!! PERSON DETECTED !! Notifying backend...")
+                
+                # Notify Backend
+                # Save image to bytes for upload
+                img_byte_arr = BytesIO()
+                img.save(img_byte_arr, format='JPEG')
+                image_data = img_byte_arr.getvalue()
+                
+                files = {'file': ('snapshot.jpg', image_data, 'image/jpeg')}
+                data = {
+                    'deviceId': device_id,
+                    'channelId': channel_id,
+                    'timestamp': int(time.time() * 1000)
+                }
+                alarm_resp = requests.post(f"{JAVA_API_HOST}/api/alarms", data=data, files=files)
+                if alarm_resp.status_code == 200:
+                        logger.info("Backend notified successfully.")
+                else:
+                        logger.error(f"Failed to notify backend: {alarm_resp.status_code} - {alarm_resp.text}")
+                
+                # Sleep a bit to avoid flooding for this channel
+                time.sleep(5)
                 
         else:
-            # logger.debug(f"No snapshot available for {channel_id}")
-            pass
+            logger.warning(f"Failed to read frame from {stream_url}")
 
     except Exception as e:
         logger.error(f"Error checking channel {channel_id}: {e}")
