@@ -33,14 +33,14 @@ services:
       - "5060:5060/tcp"
     environment:
       - SERVER_PORT=8081
-      - APP_ZLM_BASE_URL=${APP_ZLM_BASE_URL:-http://192.168.254.202:8080}
-      - APP_ZLM_SECRET=${APP_ZLM_SECRET:-ntModmVZiUw6arPbJiiuhfGC7FzNgWLx}
-      - APP_ZLM_RECORD_PATH=${APP_ZLM_RECORD_PATH:-/record}
-      - APP_GB28181_LOCAL_IP=${APP_GB28181_LOCAL_IP:-192.168.254.202} # User must set this to their LAN IP
-      - APP_GB28181_MEDIA_IP=${APP_GB28181_MEDIA_IP:-192.168.254.202} # User must set this to their LAN IP
-      - APP_ZLM_PUBLIC_BASE_URL=${APP_ZLM_PUBLIC_BASE_URL:-http://192.168.254.202:8080}
+      - APP_ZLM_BASE_URL=http://192.168.254.202:8080
+      - APP_ZLM_SECRET=ntModmVZiUw6arPbJiiuhfGC7FzNgWLx
+      - APP_ZLM_RECORD_PATH=/record
+      - APP_GB28181_LOCAL_IP=192.168.254.202 # User must set this to their LAN IP
+      - APP_GB28181_MEDIA_IP=192.168.254.202 # User must set this to their LAN IP
+      - APP_ZLM_PUBLIC_BASE_URL=http://192.168.254.202:8080
     volumes:
-      - ./video.db:/app/video.db
+      #- ./video.db:/app/video.db
       - ./data:/app/data
     restart: always
 

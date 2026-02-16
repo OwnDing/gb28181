@@ -159,6 +159,7 @@ public class AppProperties {
         private boolean autoRegisterUnknownDevice = true;
         @NotBlank
         private String localIp = "0.0.0.0";
+        private String localBindIp = "0.0.0.0";
         @Min(1)
         private int localPort = 5060;
         @NotBlank
@@ -252,6 +253,14 @@ public class AppProperties {
 
         public void setSsrcPrefix(String ssrcPrefix) {
             this.ssrcPrefix = ssrcPrefix;
+        }
+
+        public String getLocalBindIp() {
+            return localBindIp;
+        }
+
+        public void setLocalBindIp(String localBindIp) {
+            this.localBindIp = localBindIp;
         }
     }
 }

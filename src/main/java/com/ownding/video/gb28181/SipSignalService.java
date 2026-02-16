@@ -120,13 +120,13 @@ public class SipSignalService implements SipListener {
             this.messageFactory = this.sipFactory.createMessageFactory();
 
             ListeningPoint udpPoint = this.sipStack.createListeningPoint(
-                    appProperties.getGb28181().getLocalIp(),
+                    appProperties.getGb28181().getLocalBindIp(),
                     appProperties.getGb28181().getLocalPort(),
                     ListeningPoint.UDP);
             this.sipProvider = this.sipStack.createSipProvider(udpPoint);
             try {
                 ListeningPoint tcpPoint = this.sipStack.createListeningPoint(
-                        appProperties.getGb28181().getLocalIp(),
+                        appProperties.getGb28181().getLocalBindIp(),
                         appProperties.getGb28181().getLocalPort(),
                         ListeningPoint.TCP);
                 this.sipProvider.addListeningPoint(tcpPoint);
