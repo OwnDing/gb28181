@@ -176,6 +176,8 @@ export type GbAlarmEvent = {
   latitude?: string | null;
   description?: string | null;
   rawXml?: string | null;
+  snapshotUrl?: string | null;
+  videoPath?: string | null;
   createdAt: string;
 };
 
@@ -432,4 +434,15 @@ export const storageApi = {
     apiFetch<void>(`/api/records/${id}`, {
       method: "DELETE",
     }),
+};
+
+export const alarmApi = {
+  list: (params?: { limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.limit) {
+      search.set("limit", String(params.limit));
+    }
+    const suffix = search.size > 0 ? `?${search.toString()}` : "";
+    return apiFetch<GbAlarmEvent[]>(`/api/alarms${suffix}`);
+  },
 };

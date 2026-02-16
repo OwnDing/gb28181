@@ -838,7 +838,9 @@ public class SipSignalService implements SipListener {
                 extractXmlTag(xml, "Longitude").orElse(null),
                 extractXmlTag(xml, "Latitude").orElse(null),
                 extractXmlTag(xml, "AlarmDescription").or(() -> extractXmlTag(xml, "Description")).orElse(null),
-                xml));
+                xml,
+                null,
+                null));
     }
 
     private void persistMobilePosition(String deviceId, String xml) {
@@ -1019,8 +1021,10 @@ public class SipSignalService implements SipListener {
         if (streamMode == 1) {
             builder.append("a=setup:passive").append("\r\n");
             builder.append("a=connection:new").append("\r\n");
-            // ZLMediaKit openRtpServer (tcp_mode=1) only listens on the RTP port, but some devices
-            // will try to establish an extra RTCP connection on port+1. Use rtcp-mux to force
+            // ZLMediaKit openRtpServer (tcp_mode=1) only listens on the RTP port, but some
+            // devices
+            // will try to establish an extra RTCP connection on port+1. Use rtcp-mux to
+            // force
             // single-port transport and improve compatibility (e.g. EasyGBD simulator).
             builder.append("a=rtcp-mux").append("\r\n");
         } else if (streamMode == 2) {

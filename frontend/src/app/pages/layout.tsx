@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, useNavigate, NavLink } from "react-router";
-import { Video, Monitor, Settings, LogOut, Radio } from "lucide-react";
+import { Video, Monitor, Settings, LogOut, Radio, AlertTriangle } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { authApi } from "../lib/api";
 import { clearToken, getToken } from "../lib/http";
@@ -60,6 +60,7 @@ export default function Layout() {
     { path: "/video-preview", label: "在线预览", icon: Video },
     { path: "/storage-settings", label: "存储设置", icon: Settings },
     { path: "/gb28181", label: "GB28181能力", icon: Radio },
+    { path: "/alarm-history", label: "智能报警", icon: AlertTriangle },
   ];
 
   if (checking) {
@@ -104,10 +105,9 @@ export default function Layout() {
                 key={item.path}
                 to={item.path}
                 className={({ isActive }) =>
-                  `flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    isActive
-                      ? "bg-primary text-primary-foreground"
-                      : "text-slate-700 hover:bg-slate-100"
+                  `flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive
+                    ? "bg-primary text-primary-foreground"
+                    : "text-slate-700 hover:bg-slate-100"
                   }`
                 }
               >

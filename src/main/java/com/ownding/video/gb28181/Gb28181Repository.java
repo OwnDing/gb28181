@@ -22,11 +22,11 @@ public class Gb28181Repository {
 
     public Optional<GbDeviceProfile> getDeviceProfile(String deviceId) {
         return jdbcClient.sql("""
-                        SELECT device_id, name, manufacturer, model, firmware, status, raw_xml, updated_at
-                        FROM gb_device_profile
-                        WHERE device_id = :deviceId
-                        LIMIT 1
-                        """)
+                SELECT device_id, name, manufacturer, model, firmware, status, raw_xml, updated_at
+                FROM gb_device_profile
+                WHERE device_id = :deviceId
+                LIMIT 1
+                """)
                 .param("deviceId", deviceId)
                 .query((rs, rowNum) -> new GbDeviceProfile(
                         rs.getString("device_id"),
@@ -36,28 +36,27 @@ public class Gb28181Repository {
                         rs.getString("firmware"),
                         rs.getString("status"),
                         rs.getString("raw_xml"),
-                        rs.getString("updated_at")
-                ))
+                        rs.getString("updated_at")))
                 .optional();
     }
 
     public void upsertDeviceProfile(UpsertDeviceProfileCommand command) {
         String now = Instant.now().toString();
         jdbcClient.sql("""
-                        INSERT INTO gb_device_profile (
-                            device_id, name, manufacturer, model, firmware, status, raw_xml, updated_at
-                        ) VALUES (
-                            :deviceId, :name, :manufacturer, :model, :firmware, :status, :rawXml, :updatedAt
-                        )
-                        ON CONFLICT(device_id) DO UPDATE SET
-                            name = excluded.name,
-                            manufacturer = excluded.manufacturer,
-                            model = excluded.model,
-                            firmware = excluded.firmware,
-                            status = excluded.status,
-                            raw_xml = excluded.raw_xml,
-                            updated_at = excluded.updated_at
-                        """)
+                INSERT INTO gb_device_profile (
+                    device_id, name, manufacturer, model, firmware, status, raw_xml, updated_at
+                ) VALUES (
+                    :deviceId, :name, :manufacturer, :model, :firmware, :status, :rawXml, :updatedAt
+                )
+                ON CONFLICT(device_id) DO UPDATE SET
+                    name = excluded.name,
+                    manufacturer = excluded.manufacturer,
+                    model = excluded.model,
+                    firmware = excluded.firmware,
+                    status = excluded.status,
+                    raw_xml = excluded.raw_xml,
+                    updated_at = excluded.updated_at
+                """)
                 .param("deviceId", command.deviceId())
                 .param("name", command.name())
                 .param("manufacturer", command.manufacturer())
@@ -72,10 +71,10 @@ public class Gb28181Repository {
     @Transactional
     public void replaceRecordItems(String deviceId, String channelId, List<UpsertRecordItemCommand> items) {
         jdbcClient.sql("""
-                        DELETE FROM gb_record_item
-                        WHERE device_id = :deviceId
-                          AND (:channelId IS NULL OR channel_id = :channelId)
-                        """)
+                DELETE FROM gb_record_item
+                WHERE device_id = :deviceId
+                  AND (:channelId IS NULL OR channel_id = :channelId)
+                """)
                 .param("deviceId", deviceId)
                 .param("channelId", channelId)
                 .update();
@@ -83,14 +82,14 @@ public class Gb28181Repository {
         String now = Instant.now().toString();
         for (UpsertRecordItemCommand item : items) {
             jdbcClient.sql("""
-                            INSERT INTO gb_record_item (
-                                device_id, channel_id, record_id, name, address, start_time, end_time,
-                                secrecy, type, recorder_id, file_path, raw_xml, updated_at
-                            ) VALUES (
-                                :deviceId, :channelId, :recordId, :name, :address, :startTime, :endTime,
-                                :secrecy, :type, :recorderId, :filePath, :rawXml, :updatedAt
-                            )
-                            """)
+                    INSERT INTO gb_record_item (
+                        device_id, channel_id, record_id, name, address, start_time, end_time,
+                        secrecy, type, recorder_id, file_path, raw_xml, updated_at
+                    ) VALUES (
+                        :deviceId, :channelId, :recordId, :name, :address, :startTime, :endTime,
+                        :secrecy, :type, :recorderId, :filePath, :rawXml, :updatedAt
+                    )
+                    """)
                     .param("deviceId", deviceId)
                     .param("channelId", item.channelId())
                     .param("recordId", item.recordId())
@@ -110,14 +109,14 @@ public class Gb28181Repository {
 
     public List<GbRecordItem> listRecordItems(String deviceId, String channelId, int limit) {
         return jdbcClient.sql("""
-                        SELECT id, device_id, channel_id, record_id, name, address, start_time, end_time,
-                               secrecy, type, recorder_id, file_path, raw_xml, updated_at
-                        FROM gb_record_item
-                        WHERE device_id = :deviceId
-                          AND (:channelId IS NULL OR channel_id = :channelId)
-                        ORDER BY start_time DESC
-                        LIMIT :limit
-                        """)
+                SELECT id, device_id, channel_id, record_id, name, address, start_time, end_time,
+                       secrecy, type, recorder_id, file_path, raw_xml, updated_at
+                FROM gb_record_item
+                WHERE device_id = :deviceId
+                  AND (:channelId IS NULL OR channel_id = :channelId)
+                ORDER BY start_time DESC
+                LIMIT :limit
+                """)
                 .param("deviceId", deviceId)
                 .param("channelId", channelId)
                 .param("limit", limit)
@@ -135,22 +134,21 @@ public class Gb28181Repository {
                         rs.getString("recorder_id"),
                         rs.getString("file_path"),
                         rs.getString("raw_xml"),
-                        rs.getString("updated_at")
-                ))
+                        rs.getString("updated_at")))
                 .list();
     }
 
     public void insertAlarm(UpsertAlarmEventCommand command) {
         String now = Instant.now().toString();
         jdbcClient.sql("""
-                        INSERT INTO gb_alarm_event (
-                            device_id, channel_id, alarm_method, alarm_type, alarm_priority,
-                            alarm_time, longitude, latitude, description, raw_xml, created_at
-                        ) VALUES (
-                            :deviceId, :channelId, :alarmMethod, :alarmType, :alarmPriority,
-                            :alarmTime, :longitude, :latitude, :description, :rawXml, :createdAt
-                        )
-                        """)
+                INSERT INTO gb_alarm_event (
+                    device_id, channel_id, alarm_method, alarm_type, alarm_priority,
+                    alarm_time, longitude, latitude, description, raw_xml, snapshot_url, video_path, created_at
+                ) VALUES (
+                    :deviceId, :channelId, :alarmMethod, :alarmType, :alarmPriority,
+                    :alarmTime, :longitude, :latitude, :description, :rawXml, :snapshotUrl, :videoPath, :createdAt
+                )
+                """)
                 .param("deviceId", command.deviceId())
                 .param("channelId", command.channelId())
                 .param("alarmMethod", command.alarmMethod())
@@ -161,18 +159,20 @@ public class Gb28181Repository {
                 .param("latitude", command.latitude())
                 .param("description", command.description())
                 .param("rawXml", command.rawXml())
+                .param("snapshotUrl", command.snapshotUrl())
+                .param("videoPath", command.videoPath())
                 .param("createdAt", now)
                 .update();
     }
 
     public List<GbAlarmEvent> listAlarms(int limit) {
         return jdbcClient.sql("""
-                        SELECT id, device_id, channel_id, alarm_method, alarm_type, alarm_priority,
-                               alarm_time, longitude, latitude, description, raw_xml, created_at
-                        FROM gb_alarm_event
-                        ORDER BY created_at DESC
-                        LIMIT :limit
-                        """)
+                SELECT id, device_id, channel_id, alarm_method, alarm_type, alarm_priority,
+                       alarm_time, longitude, latitude, description, raw_xml, created_at
+                FROM gb_alarm_event
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """)
                 .param("limit", limit)
                 .query((rs, rowNum) -> new GbAlarmEvent(
                         rs.getLong("id"),
@@ -186,14 +186,16 @@ public class Gb28181Repository {
                         rs.getString("latitude"),
                         rs.getString("description"),
                         rs.getString("raw_xml"),
-                        rs.getString("created_at")
-                ))
+                        rs.getString("snapshot_url"),
+                        rs.getString("video_path"),
+                        rs.getString("created_at")))
                 .list();
     }
 
     public void insertMobilePosition(UpsertMobilePositionCommand command) {
         String now = Instant.now().toString();
-        jdbcClient.sql("""
+        jdbcClient
+                .sql("""
                         INSERT INTO gb_mobile_position (
                             device_id, channel_id, time, longitude, latitude, speed, direction, altitude, raw_xml, created_at
                         ) VALUES (
@@ -214,7 +216,8 @@ public class Gb28181Repository {
     }
 
     public List<GbMobilePosition> listMobilePositions(String deviceId, int limit) {
-        return jdbcClient.sql("""
+        return jdbcClient
+                .sql("""
                         SELECT id, device_id, channel_id, time, longitude, latitude, speed, direction, altitude, raw_xml, created_at
                         FROM gb_mobile_position
                         WHERE (:deviceId IS NULL OR device_id = :deviceId)
@@ -234,18 +237,17 @@ public class Gb28181Repository {
                         rs.getString("direction"),
                         rs.getString("altitude"),
                         rs.getString("raw_xml"),
-                        rs.getString("created_at")
-                ))
+                        rs.getString("created_at")))
                 .list();
     }
 
     public List<GbSubscription> listSubscriptions(String deviceId) {
         return jdbcClient.sql("""
-                        SELECT id, device_id, event_type, call_id, expires, status, created_at, updated_at
-                        FROM gb_subscription
-                        WHERE (:deviceId IS NULL OR device_id = :deviceId)
-                        ORDER BY id DESC
-                        """)
+                SELECT id, device_id, event_type, call_id, expires, status, created_at, updated_at
+                FROM gb_subscription
+                WHERE (:deviceId IS NULL OR device_id = :deviceId)
+                ORDER BY id DESC
+                """)
                 .param("deviceId", deviceId)
                 .query((rs, rowNum) -> new GbSubscription(
                         rs.getLong("id"),
@@ -255,18 +257,17 @@ public class Gb28181Repository {
                         rs.getInt("expires"),
                         rs.getString("status"),
                         rs.getString("created_at"),
-                        rs.getString("updated_at")
-                ))
+                        rs.getString("updated_at")))
                 .list();
     }
 
     public GbSubscription createSubscription(String deviceId, String eventType, String callId, int expires) {
         String now = Instant.now().toString();
         Long id = jdbcClient.sql("""
-                        INSERT INTO gb_subscription (device_id, event_type, call_id, expires, status, created_at, updated_at)
-                        VALUES (:deviceId, :eventType, :callId, :expires, 'ACTIVE', :createdAt, :updatedAt)
-                        RETURNING id
-                        """)
+                INSERT INTO gb_subscription (device_id, event_type, call_id, expires, status, created_at, updated_at)
+                VALUES (:deviceId, :eventType, :callId, :expires, 'ACTIVE', :createdAt, :updatedAt)
+                RETURNING id
+                """)
                 .param("deviceId", deviceId)
                 .param("eventType", eventType)
                 .param("callId", callId)
@@ -280,11 +281,11 @@ public class Gb28181Repository {
 
     public Optional<GbSubscription> findSubscriptionById(long id) {
         return jdbcClient.sql("""
-                        SELECT id, device_id, event_type, call_id, expires, status, created_at, updated_at
-                        FROM gb_subscription
-                        WHERE id = :id
-                        LIMIT 1
-                        """)
+                SELECT id, device_id, event_type, call_id, expires, status, created_at, updated_at
+                FROM gb_subscription
+                WHERE id = :id
+                LIMIT 1
+                """)
                 .param("id", id)
                 .query((rs, rowNum) -> new GbSubscription(
                         rs.getLong("id"),
@@ -294,18 +295,17 @@ public class Gb28181Repository {
                         rs.getInt("expires"),
                         rs.getString("status"),
                         rs.getString("created_at"),
-                        rs.getString("updated_at")
-                ))
+                        rs.getString("updated_at")))
                 .optional();
     }
 
     public void markSubscriptionInactive(long id) {
         String now = Instant.now().toString();
         jdbcClient.sql("""
-                        UPDATE gb_subscription
-                        SET status = 'INACTIVE', updated_at = :updatedAt
-                        WHERE id = :id
-                        """)
+                UPDATE gb_subscription
+                SET status = 'INACTIVE', updated_at = :updatedAt
+                WHERE id = :id
+                """)
                 .param("updatedAt", now)
                 .param("id", id)
                 .update();
@@ -314,20 +314,20 @@ public class Gb28181Repository {
     public GbPlaybackSession savePlaybackSession(UpsertPlaybackSessionCommand command) {
         String now = Instant.now().toString();
         jdbcClient.sql("""
-                        INSERT INTO gb_playback_session (
-                            session_id, device_id, channel_id, stream_id, app, ssrc, call_id, rtp_port,
-                            protocol, speed, status, start_time, end_time, created_at, updated_at
-                        ) VALUES (
-                            :sessionId, :deviceId, :channelId, :streamId, :app, :ssrc, :callId, :rtpPort,
-                            :protocol, :speed, :status, :startTime, :endTime, :createdAt, :updatedAt
-                        )
-                        ON CONFLICT(session_id) DO UPDATE SET
-                            call_id = excluded.call_id,
-                            rtp_port = excluded.rtp_port,
-                            speed = excluded.speed,
-                            status = excluded.status,
-                            updated_at = excluded.updated_at
-                        """)
+                INSERT INTO gb_playback_session (
+                    session_id, device_id, channel_id, stream_id, app, ssrc, call_id, rtp_port,
+                    protocol, speed, status, start_time, end_time, created_at, updated_at
+                ) VALUES (
+                    :sessionId, :deviceId, :channelId, :streamId, :app, :ssrc, :callId, :rtpPort,
+                    :protocol, :speed, :status, :startTime, :endTime, :createdAt, :updatedAt
+                )
+                ON CONFLICT(session_id) DO UPDATE SET
+                    call_id = excluded.call_id,
+                    rtp_port = excluded.rtp_port,
+                    speed = excluded.speed,
+                    status = excluded.status,
+                    updated_at = excluded.updated_at
+                """)
                 .param("sessionId", command.sessionId())
                 .param("deviceId", command.deviceId())
                 .param("channelId", command.channelId())
@@ -349,12 +349,12 @@ public class Gb28181Repository {
 
     public Optional<GbPlaybackSession> findPlaybackSessionBySessionId(String sessionId) {
         return jdbcClient.sql("""
-                        SELECT id, session_id, device_id, channel_id, stream_id, app, ssrc, call_id, rtp_port,
-                               protocol, speed, status, start_time, end_time, created_at, updated_at
-                        FROM gb_playback_session
-                        WHERE session_id = :sessionId
-                        LIMIT 1
-                        """)
+                SELECT id, session_id, device_id, channel_id, stream_id, app, ssrc, call_id, rtp_port,
+                       protocol, speed, status, start_time, end_time, created_at, updated_at
+                FROM gb_playback_session
+                WHERE session_id = :sessionId
+                LIMIT 1
+                """)
                 .param("sessionId", sessionId)
                 .query((rs, rowNum) -> new GbPlaybackSession(
                         rs.getLong("id"),
@@ -372,18 +372,17 @@ public class Gb28181Repository {
                         rs.getString("start_time"),
                         rs.getString("end_time"),
                         rs.getString("created_at"),
-                        rs.getString("updated_at")
-                ))
+                        rs.getString("updated_at")))
                 .optional();
     }
 
     public List<GbPlaybackSession> listPlaybackSessions() {
         return jdbcClient.sql("""
-                        SELECT id, session_id, device_id, channel_id, stream_id, app, ssrc, call_id, rtp_port,
-                               protocol, speed, status, start_time, end_time, created_at, updated_at
-                        FROM gb_playback_session
-                        ORDER BY created_at DESC
-                        """)
+                SELECT id, session_id, device_id, channel_id, stream_id, app, ssrc, call_id, rtp_port,
+                       protocol, speed, status, start_time, end_time, created_at, updated_at
+                FROM gb_playback_session
+                ORDER BY created_at DESC
+                """)
                 .query((rs, rowNum) -> new GbPlaybackSession(
                         rs.getLong("id"),
                         rs.getString("session_id"),
@@ -400,18 +399,17 @@ public class Gb28181Repository {
                         rs.getString("start_time"),
                         rs.getString("end_time"),
                         rs.getString("created_at"),
-                        rs.getString("updated_at")
-                ))
+                        rs.getString("updated_at")))
                 .list();
     }
 
     public void updatePlaybackSessionStatus(String sessionId, String status, double speed) {
         String now = Instant.now().toString();
         jdbcClient.sql("""
-                        UPDATE gb_playback_session
-                        SET status = :status, speed = :speed, updated_at = :updatedAt
-                        WHERE session_id = :sessionId
-                        """)
+                UPDATE gb_playback_session
+                SET status = :status, speed = :speed, updated_at = :updatedAt
+                WHERE session_id = :sessionId
+                """)
                 .param("status", status)
                 .param("speed", speed)
                 .param("updatedAt", now)
@@ -422,11 +420,11 @@ public class Gb28181Repository {
     @Transactional
     public void syncCatalog(String deviceId, List<UpsertCatalogItemCommand> items) {
         Optional<DevicePkAndCodec> deviceInfo = jdbcClient.sql("""
-                        SELECT id, preferred_codec
-                        FROM gb_device
-                        WHERE device_id = :deviceId
-                        LIMIT 1
-                        """)
+                SELECT id, preferred_codec
+                FROM gb_device
+                WHERE device_id = :deviceId
+                LIMIT 1
+                """)
                 .param("deviceId", deviceId)
                 .query((rs, rowNum) -> new DevicePkAndCodec(
                         rs.getLong("id"),
@@ -443,10 +441,10 @@ public class Gb28181Repository {
         }
         Map<String, String> existingCodecByChannelId = new HashMap<>();
         jdbcClient.sql("""
-                        SELECT channel_id, codec
-                        FROM gb_channel
-                        WHERE device_pk = :devicePk
-                        """)
+                SELECT channel_id, codec
+                FROM gb_channel
+                WHERE device_pk = :devicePk
+                """)
                 .param("devicePk", pk)
                 .query((rs, rowNum) -> {
                     existingCodecByChannelId.put(rs.getString("channel_id"), rs.getString("codec"));
@@ -468,7 +466,8 @@ public class Gb28181Repository {
             if (codec == null) {
                 codec = preferredCodec;
             }
-            jdbcClient.sql("""
+            jdbcClient
+                    .sql("""
                             INSERT INTO gb_channel (device_pk, channel_no, channel_id, name, codec, status, created_at, updated_at)
                             VALUES (:devicePk, :channelNo, :channelId, :name, :codec, :status, :now, :now)
                             ON CONFLICT(channel_id) DO UPDATE SET
@@ -489,10 +488,10 @@ public class Gb28181Repository {
         }
 
         jdbcClient.sql("""
-                        UPDATE gb_device
-                        SET channel_count = :channelCount, updated_at = :updatedAt
-                        WHERE id = :devicePk
-                        """)
+                UPDATE gb_device
+                SET channel_count = :channelCount, updated_at = :updatedAt
+                WHERE id = :devicePk
+                """)
                 .param("channelCount", items.size())
                 .param("updatedAt", now)
                 .param("devicePk", pk)
@@ -522,11 +521,11 @@ public class Gb28181Repository {
             return List.of();
         }
         return jdbcClient.sql("""
-                        SELECT channel_id, name, status
-                        FROM gb_channel
-                        WHERE device_pk = :devicePk
-                        ORDER BY channel_no ASC
-                        """)
+                SELECT channel_id, name, status
+                FROM gb_channel
+                WHERE device_pk = :devicePk
+                ORDER BY channel_no ASC
+                """)
                 .param("devicePk", devicePk.get())
                 .query((rs, rowNum) -> new GbCatalogItem(
                         rs.getString("channel_id"),
@@ -541,20 +540,19 @@ public class Gb28181Repository {
                         null,
                         null,
                         null,
-                        rs.getString("status")
-                ))
+                        rs.getString("status")))
                 .list();
     }
 
     public List<GbAlarmEvent> listAlarmsByDevice(String deviceId, int limit) {
         return jdbcClient.sql("""
-                        SELECT id, device_id, channel_id, alarm_method, alarm_type, alarm_priority,
-                               alarm_time, longitude, latitude, description, raw_xml, created_at
-                        FROM gb_alarm_event
-                        WHERE (:deviceId IS NULL OR device_id = :deviceId)
-                        ORDER BY created_at DESC
-                        LIMIT :limit
-                        """)
+                SELECT id, device_id, channel_id, alarm_method, alarm_type, alarm_priority,
+                       alarm_time, longitude, latitude, description, raw_xml, snapshot_url, video_path, created_at
+                FROM gb_alarm_event
+                WHERE (:deviceId IS NULL OR device_id = :deviceId)
+                ORDER BY created_at DESC
+                LIMIT :limit
+                """)
                 .param("deviceId", deviceId)
                 .param("limit", limit)
                 .query((rs, rowNum) -> new GbAlarmEvent(
@@ -569,8 +567,9 @@ public class Gb28181Repository {
                         rs.getString("latitude"),
                         rs.getString("description"),
                         rs.getString("raw_xml"),
-                        rs.getString("created_at")
-                ))
+                        rs.getString("snapshot_url"),
+                        rs.getString("video_path"),
+                        rs.getString("created_at")))
                 .list();
     }
 
@@ -581,8 +580,7 @@ public class Gb28181Repository {
             String model,
             String firmware,
             String status,
-            String rawXml
-    ) {
+            String rawXml) {
     }
 
     public record UpsertRecordItemCommand(
@@ -596,8 +594,7 @@ public class Gb28181Repository {
             String type,
             String recorderId,
             String filePath,
-            String rawXml
-    ) {
+            String rawXml) {
     }
 
     public record UpsertAlarmEventCommand(
@@ -610,8 +607,9 @@ public class Gb28181Repository {
             String longitude,
             String latitude,
             String description,
-            String rawXml
-    ) {
+            String rawXml,
+            String snapshotUrl,
+            String videoPath) {
     }
 
     public record UpsertMobilePositionCommand(
@@ -623,8 +621,7 @@ public class Gb28181Repository {
             String speed,
             String direction,
             String altitude,
-            String rawXml
-    ) {
+            String rawXml) {
     }
 
     public record UpsertPlaybackSessionCommand(
@@ -640,16 +637,14 @@ public class Gb28181Repository {
             double speed,
             String status,
             String startTime,
-            String endTime
-    ) {
+            String endTime) {
     }
 
     public record UpsertCatalogItemCommand(
             String channelId,
             String name,
             String codec,
-            String status
-    ) {
+            String status) {
     }
 
     private record DevicePkAndCodec(long devicePk, String preferredCodec) {

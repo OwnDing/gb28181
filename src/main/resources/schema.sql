@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS gb_alarm_event (
     latitude TEXT,
     description TEXT,
     raw_xml TEXT,
+    snapshot_url TEXT,
+    video_path TEXT,
     created_at TEXT NOT NULL
 );
 
