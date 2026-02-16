@@ -15,5 +15,7 @@ ENV ZLM_HOST=http://host.docker.internal:80
 ENV ZLM_SECRET=ntModmVZiUw6arPbJiiuhfGC7FzNgWLx
 ENV CHECK_INTERVAL=2.0
 ENV RTSP_HOST=127.0.0.1
+ENV AUTH_USERNAME=admin
+ENV AUTH_PASSWORD=admin123
 
 CMD ["python", "app.py"]

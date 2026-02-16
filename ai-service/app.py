@@ -29,30 +29,105 @@ RTSP_HOST_PORT = os.getenv("RTSP_HOST_PORT", "554")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# Auth Configuration
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "admin123")
+AUTH_TOKEN = None
+
+def login():
+    """Login to Java Backend to get token."""
+    global AUTH_TOKEN
+    try:
+        url = f"{JAVA_API_HOST}/api/auth/login"
+        data = {"username": AUTH_USERNAME, "password": AUTH_PASSWORD}
+        logger.info(f"Logging in to {url} as {AUTH_USERNAME}...")
+        resp = requests.post(url, json=data, timeout=5)
+        if resp.status_code == 200:
+            result = resp.json()
+            if result.get("code") == 200 or result.get("code") == 0:
+                AUTH_TOKEN = result["data"]["token"]
+                logger.info("Login successful, token obtained.")
+                return True
+            else:
+                logger.error(f"Login failed: {result.get('message')}")
+        else:
+            logger.error(f"Login failed: Status {resp.status_code}, Body: {resp.text}")
+    except Exception as e:
+        logger.error(f"Login exception: {e}")
+    return False
+
+def get_headers():
+    if not AUTH_TOKEN:
+        if not login():
+            return {}
+    return {"Authorization": f"Bearer {AUTH_TOKEN}"}
+
 def get_channels():
     """Fetch active channels from Java Backend or ZLM."""
     # For MVP, we can fetch online devices from Java backend
     try:
         url = f"{JAVA_API_HOST}/api/devices"
-        response = requests.get(url)
+        logger.info(f"Fetching devices from: {url}")
+        
+        headers = get_headers()
+        if not headers:
+            return []
+
+        response = requests.get(url, headers=headers, timeout=5) # Add timeout
+        
+        # Handle token expiration
+        if response.status_code == 401:
+            logger.info("Token expired, re-logging in...")
+            if login():
+                headers = get_headers()
+                response = requests.get(url, headers=headers, timeout=5)
+            else:
+                return []
+
         if response.status_code == 200:
-            devices = response.json()
+            # Check for standard API result wrapper
+            result = response.json()
+            # If backend wraps response in ApiResult (code, msg, data)
+            if isinstance(result, dict) and "data" in result:
+                 devices = result["data"]
+            else:
+                 devices = result # Plain list?
+            
+            if not isinstance(devices, list):
+                logger.error(f"Unexpected devices response format: {type(devices)}")
+                return []
+                
+            logger.info(f"Got {len(devices)} devices from API")
             channels = []
             for device in devices:
                  # Ensure we have active channels. This API might need adjustment depending on actual response structure
                  # Assuming device has 'deviceId' and we can try to look at its channels
-                 if device.get('online', False):
+                 is_online = device.get('online', False)
+                 logger.info(f"Device {device.get('deviceId')} online status: {is_online}")
+                 
+                 if is_online:
                      # Fetch channels for this device
                      c_url = f"{JAVA_API_HOST}/api/devices/{device['deviceId']}/channels"
-                     c_resp = requests.get(c_url)
+                     c_resp = requests.get(c_url, headers=headers, timeout=5)
                      if c_resp.status_code == 200:
-                         dev_channels = c_resp.json()
+                         c_result = c_resp.json()
+                         if isinstance(c_result, dict) and "data" in c_result:
+                             dev_channels = c_result["data"]
+                         else:
+                             dev_channels = c_result
+                             
+                         logger.info(f"Device {device.get('deviceId')} has {len(dev_channels)} channels")
                          for ch in dev_channels:
+                             # We only care about channels that are pushing stream? 
+                             # For now, take all channels, or maybe filter by status if available
                              channels.append({
                                  "deviceId": device['deviceId'],
                                  "channelId": ch['channelId']
                              })
+            logger.info(f"Total active channels found: {len(channels)}")
             return channels
+        else:
+             logger.error(f"Failed to fetch devices. Status: {response.status_code}, Body: {response.text}")
     except Exception as e:
         logger.error(f"Failed to fetch channels: {e}")
     return []
