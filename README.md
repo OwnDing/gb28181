@@ -102,6 +102,42 @@ graph TD
     -   **API Doc**: http://localhost:8080/swagger-ui.html
     -   **Default Account**: `admin` / `admin123`
 
+## 🤖 AI Service Usage / AI 服务使用
+
+The AI service runs separately and connects to ZLMediaKit to process video streams for object detection.
+AI 服务独立运行，连接 ZLMediaKit 处理视频流并进行目标检测。
+
+### 1. Prerequisites / 前置要求
+-   Python 3.9+
+-   CUDA (Optional, for GPU acceleration / 可选，用于 GPU 加速)
+
+### 2. Startup / 启动服务
+
+```bash
+cd ai-service
+
+# Install dependencies / 安装依赖
+pip install -r requirements.txt
+
+# Run the service / 启动服务
+# Ensure ZLMediaKit and Java Backend are running first!
+# 请确保 ZLMediaKit 和 Java 后端已启动！
+python app.py
+```
+
+### 3. Configuration (Environment Variables) / 配置（环境变量）
+
+You can configure the service by setting environment variables before running:
+启动前可通过环境变量进行配置：
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `JAVA_API_HOST` | Backend API Address | `http://127.0.0.1:8081` |
+| `ZLM_HOST` | ZLMediaKit HTTP API Address | `http://127.0.0.1:8080` |
+| `RTSP_HOST` | RTSP Stream Host (Local IP) | `127.0.0.1` |
+| `YOLO_MODEL` | YOLOv8 Model (n/s/m/l/x) | `yolov8n.pt` |
+| `CONFIDENCE_THRESHOLD` | Detection Confidence (0.0-1.0) | `0.5` |
+
 ## ⚙️ Configuration / 配置说明
 
 ### Environment Variables / 环境变量
