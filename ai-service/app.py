@@ -11,6 +11,7 @@ JAVA_API_HOST = os.getenv("JAVA_API_HOST", "http://127.0.0.1:8080")
 CHECK_INTERVAL = float(os.getenv("CHECK_INTERVAL", "2.0"))  # Seconds between checks per channel
 CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.5"))
 RTSP_HOST = os.getenv("RTSP_HOST", "127.0.0.1")
+RTSP_HOST_PORT = os.getenv("RTSP_HOST_PORT", "554")
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -86,7 +87,7 @@ def check_channel(device_id, channel_id, model):
     snapshot_url = f"{ZLM_HOST}/index/api/getSnap"
     # We need to know the 'stream_url' to tell ZLM what to snap.
     # Construct a local RTSP URL for the stream
-    stream_url = f"rtsp://{RTSP_HOST}:554/{app}/{stream_id}"
+    stream_url = f"rtsp://{RTSP_HOST}:{RTSP_HOST_PORT}/{app}/{stream_id}"
     
     params = {
         "secret": os.getenv("ZLM_SECRET", "ntModmVZiUw6arPbJiiuhfGC7FzNgWLx"),
