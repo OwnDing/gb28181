@@ -22,9 +22,9 @@ app:
     default-admin-username: admin
     default-admin-password: admin123
   zlm:
-    base-url: ${APP_ZLM_BASE_URL:http://127.0.0.1:8080}
+    base-url: ${APP_ZLM_BASE_URL:http://192.168.254.202:8080}
     secret: ${APP_ZLM_SECRET:ntModmVZiUw6arPbJiiuhfGC7FzNgWLx}
-    public-base-url: ${APP_ZLM_PUBLIC_BASE_URL:http://127.0.0.1:8080}
+    public-base-url: ${APP_ZLM_PUBLIC_BASE_URL:http://192.168.254.202:8080}
     media-http-port: 8080
     default-app: rtp
   preview:
