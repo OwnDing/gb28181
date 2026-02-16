@@ -1,0 +1,50 @@
+services:
+  zlmediakit:
+    image: zlmediakit/zlmediakit:master
+    container_name: zlmediakit
+    #network_mode: "host" # Using host network as per ZLMediaKit recommendation for UDP range performance
+    ports:
+      - "8080:80"
+      - "1935:1935"
+      - "8443:443"
+      - "10000:10000/udp"
+      - "10000:10000"
+      - "8554:554"
+      - "8000:8000/udp"
+      - "9000:9000/udp"
+      - "30000-30050:30000-30050/udp"
+      - "30000-30050:30000-30050/tcp"
+    volumes:
+      - ./config.ini:/opt/media/conf/config.ini
+      - ./data/records:/record
+    restart: always
+    # Ports are managed by host network mode
+
+  app:
+    build: .
+    container_name: gb28181-app
+    # If ZLM is on host network, App can't access it via service name easily on all OSs.
+    # However, for simplicity and since ZLM needs extensive UDP ranges, host network is best for ZLM.
+    # App can also use host network to simplify SIP port mapping and communication with ZLM on localhost.
+    #network_mode: "host"
+    ports:
+      - "8081:8081"
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+    environment:
+      - SERVER_PORT=8081
+      - APP_ZLM_BASE_URL=${APP_ZLM_BASE_URL:-http://192.168.254.202:8080}
+      - APP_ZLM_SECRET=${APP_ZLM_SECRET:-ntModmVZiUw6arPbJiiuhfGC7FzNgWLx}
+      - APP_ZLM_RECORD_PATH=${APP_ZLM_RECORD_PATH:-/record}
+      - APP_GB28181_LOCAL_IP=${APP_GB28181_LOCAL_IP:-192.168.254.202} # User must set this to their LAN IP
+      - APP_GB28181_MEDIA_IP=${APP_GB28181_MEDIA_IP:-192.168.254.202} # User must set this to their LAN IP
+      - APP_ZLM_PUBLIC_BASE_URL=${APP_ZLM_PUBLIC_BASE_URL:-http://192.168.254.202:8080}
+    volumes:
+      - ./video.db:/app/video.db
+      - ./data:/app/data
+    restart: always
+
+# Note: Using network_mode: "host" is often recommended for ZLMediaKit due to the large number of UDP ports.
+# It simplifies RTSP/WebRTC/GB28181 port management significantly.
+# Consequently, the 'app' service also uses host mode to easily talk to ZLM on localhost
+# and to bind SIP ports (5060) directly to the host interface.

@@ -8,3 +8,5 @@ docker run -id --network=host --name zlmediakit -v ./config.ini:/opt/media/conf/
 
 docker run -id --name ai-service -e ZLM_HOST=http://192.168.254.202:8080 -e JAVA_API_HOST=http://192.168.254.202:8081 -e RTSP_HOST=192.168.254.202 -e RTSP_HOST_PORT=8554  gb28181-ai-service
 
+docker-compose up -d --build
+
