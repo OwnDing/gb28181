@@ -34,6 +34,11 @@ graph TD
     AI -->|Alarm API| Backend
 ```
 
+## Docker Images / 镜像下载(已经构建好)
+
+- **AI Algorithm Image / AI 算法镜像**: `docker pull dingjianchen/gb28181-ai:latest`
+- **GB28181 Program Image / GB28181 程序镜像**: `docker pull dingjianchen/gb28181:latest`
+
 ## 📸 Screenshots / 系统截图
 
 ### 1. Login / 登录
@@ -142,6 +147,43 @@ AI 服务独立运行，连接 ZLMediaKit 处理视频流并进行目标检测�
 -   CUDA (Optional, for GPU acceleration / 可选，用于 GPU 加速)
 
 ### 2. Startup / 启动服务
+
+#### Method 1: Docker Compose (Recommended / 推荐)
+
+##### Use Docker Image / 使用 Docker 镜像(已构建好)
+Add the following service to your `docker-compose.yaml`:
+在 `docker-compose.yaml` 中添加以下服务：
+
+```yaml
+  ai-service:
+    image: dingjianchen/gb28181-ai:latest
+    container_name: gb28181-ai
+    restart: always
+    environment:
+      - JAVA_API_HOST=http://192.168.1.100:8081 # Backend API address / 后端 API 地址
+      - ZLM_HOST=http://192.168.1.100:8080      # ZLMediaKit HTTP API address / ZLMediaKit HTTP API 地址
+      - RTSP_HOST=192.168.1.100                 # Local LAN IP / 本机局域网 IP
+      - YOLO_MODEL=yolov8n.pt                   # Model: yolov8n.pt, yolov8s.pt, etc.
+    volumes:
+      - ./snapshots:/app/snapshots              # Map snapshots directory / 映射快照目录
+```
+
+##### Build and Run / 构建和运行（自己构建镜像）
+```bash
+# 构建镜像（注意这次会安装 ffmpeg 等库）
+docker build -t gb28181-ai-service .
+
+# 启动容器
+docker run -id --name ai-service \
+  -e ZLM_HOST=http://192.168.254.202:8080 \
+  -e JAVA_API_HOST=http://192.168.254.202:8081 \
+  -e RTSP_HOST=192.168.254.202 \
+  -e RTSP_HOST_PORT=8554  \
+  gb28181-ai-service
+
+docker logs -f ai-service
+```
+#### Method 2: Source Code / 源码启动
 
 ```bash
 cd ai-service
