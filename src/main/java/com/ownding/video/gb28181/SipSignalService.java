@@ -271,6 +271,176 @@ public class SipSignalService implements SipListener {
         }
     }
 
+    /**
+     * Send INFO request within an existing dialog for MANSRTSP playback control.
+     * Supported actions: PLAY (resume/speed), PAUSE, SEEK (Range), TEARDOWN.
+     */
+    public SipCommandResult sendInfo(String callId, String mansrtspBody) {
+        if (callId == null || callId.isBlank()) {
+            return SipCommandResult.failed(callId, 400, "callId为空");
+        }
+        ensureSipReady();
+        Dialog dialog = dialogByCallId.get(callId);
+        if (dialog == null) {
+            return SipCommandResult.failed(callId, 404, "Dialog不存在: " + callId);
+        }
+        if (dialog.getState() == DialogState.TERMINATED) {
+            return SipCommandResult.failed(callId, 410, "Dialog已终止: " + callId);
+        }
+        try {
+            Request infoRequest = dialog.createRequest(Request.INFO);
+            DeviceEndpoint endpoint = endpointByCallId.get(callId);
+            overrideDialogRequestUriIfNeeded(callId, infoRequest, endpoint);
+            ContentTypeHeader contentType = headerFactory.createContentTypeHeader("Application", "MANSRTSP");
+            infoRequest.setContent(mansrtspBody, contentType);
+
+            ClientTransaction transaction = sipProvider.getNewClientTransaction(infoRequest);
+            dialog.sendRequest(transaction);
+            log.info("send INFO: callId={}, body={}", callId, mansrtspBody.replace("\r\n", " | "));
+            return SipCommandResult.success(callId, 200, "INFO已发送");
+        } catch (Exception ex) {
+            log.warn("send INFO failed: callId={}, reason={}", callId, ex.getMessage());
+            return SipCommandResult.failed(callId, 500, "INFO发送失败: " + ex.getMessage());
+        }
+    }
+
+    /**
+     * Build MANSRTSP PLAY body for resuming playback or setting speed.
+     */
+    public String buildMansrtspPlay(double speed) {
+        return "PLAY MANSRTSP/1.0\r\nCSeq: " + nextCSeq() + "\r\nScale: " + speed + "\r\n\r\n";
+    }
+
+    /**
+     * Build MANSRTSP PAUSE body.
+     */
+    public String buildMansrtspPause() {
+        return "PAUSE MANSRTSP/1.0\r\nCSeq: " + nextCSeq() + "\r\n\r\n";
+    }
+
+    /**
+     * Build MANSRTSP PLAY body with Range for seeking (drag).
+     * 
+     * @param nptSeconds seek position in seconds from the start of the playback
+     *                   range
+     */
+    public String buildMansrtspSeek(long nptSeconds) {
+        return "PLAY MANSRTSP/1.0\r\nCSeq: " + nextCSeq() + "\r\nRange: npt=" + nptSeconds + "-\r\n\r\n";
+    }
+
+    /**
+     * Build MANSRTSP TEARDOWN body.
+     */
+    public String buildMansrtspTeardown() {
+        return "TEARDOWN MANSRTSP/1.0\r\nCSeq: " + nextCSeq() + "\r\n\r\n";
+    }
+
+    /**
+     * Send PTZ control command via SIP MESSAGE with DeviceControl XML body.
+     * PTZ command is encoded as 8-byte hex string per GB28181 Annex A.3.
+     */
+    public SipCommandResult sendPtzControl(String deviceId, String channelId, String ptzCmd) {
+        if (!appProperties.getGb28181().isEnabled()) {
+            return SipCommandResult.skipped("SIP信令未启用");
+        }
+        ensureSipReady();
+        String xml = "<?xml version=\"1.0\" encoding=\"GB2312\"?>\r\n"
+                + "<Control>\r\n"
+                + "<CmdType>DeviceControl</CmdType>\r\n"
+                + "<SN>" + nextCSeq() + "</SN>\r\n"
+                + "<DeviceID>" + (channelId != null && !channelId.isBlank() ? channelId : deviceId) + "</DeviceID>\r\n"
+                + "<PTZCmd>" + ptzCmd + "</PTZCmd>\r\n"
+                + "</Control>\r\n";
+        log.info("send PTZ control: deviceId={}, channelId={}, ptzCmd={}", deviceId, channelId, ptzCmd);
+        return sendMessage(deviceId, xml);
+    }
+
+    /**
+     * Encode PTZ command bytes per GB28181 Annex A.3.
+     * Format: A5 0F addr cmd data1 data2 data3 checksum
+     * 
+     * @param address device address (low 8 bits)
+     * @param cmdCode command code byte (e.g. 0x08=zoom in, 0x04=zoom out, direction
+     *                bits)
+     * @param data1   parameter 1 (horizontal speed 0-255)
+     * @param data2   parameter 2 (vertical speed 0-255)
+     * @param data3   parameter 3 (zoom speed high 4 bits in upper nibble)
+     */
+    public static String encodePtzCommand(int address, int cmdCode, int data1, int data2, int data3) {
+        int byte1 = 0xA5;
+        int byte2 = 0x0F;
+        int byte3 = address & 0xFF;
+        int byte4 = cmdCode & 0xFF;
+        int byte5 = data1 & 0xFF;
+        int byte6 = data2 & 0xFF;
+        int byte7 = data3 & 0xFF;
+        int checksum = (byte1 + byte2 + byte3 + byte4 + byte5 + byte6 + byte7) % 256;
+        return String.format("%02X%02X%02X%02X%02X%02X%02X%02X",
+                byte1, byte2, byte3, byte4, byte5, byte6, byte7, checksum);
+    }
+
+    /** PTZ Stop */
+    public static String ptzStop(int address) {
+        return encodePtzCommand(address, 0x00, 0x00, 0x00, 0x00);
+    }
+
+    /** PTZ direction commands with speed 0-255 */
+    public static String ptzUp(int address, int speed) {
+        return encodePtzCommand(address, 0x08, 0x00, speed, 0x00);
+    }
+
+    public static String ptzDown(int address, int speed) {
+        return encodePtzCommand(address, 0x04, 0x00, speed, 0x00);
+    }
+
+    public static String ptzLeft(int address, int speed) {
+        return encodePtzCommand(address, 0x02, speed, 0x00, 0x00);
+    }
+
+    public static String ptzRight(int address, int speed) {
+        return encodePtzCommand(address, 0x01, speed, 0x00, 0x00);
+    }
+
+    public static String ptzLeftUp(int address, int speed) {
+        return encodePtzCommand(address, 0x0A, speed, speed, 0x00);
+    }
+
+    public static String ptzRightUp(int address, int speed) {
+        return encodePtzCommand(address, 0x09, speed, speed, 0x00);
+    }
+
+    public static String ptzLeftDown(int address, int speed) {
+        return encodePtzCommand(address, 0x06, speed, speed, 0x00);
+    }
+
+    public static String ptzRightDown(int address, int speed) {
+        return encodePtzCommand(address, 0x05, speed, speed, 0x00);
+    }
+
+    /** PTZ zoom in/out with speed (upper 4 bits of data3) */
+    public static String ptzZoomIn(int address, int speed) {
+        int zoomNibble = ((speed & 0x0F) << 4);
+        return encodePtzCommand(address, 0x10, 0x00, 0x00, zoomNibble);
+    }
+
+    public static String ptzZoomOut(int address, int speed) {
+        int zoomNibble = ((speed & 0x0F) << 4);
+        return encodePtzCommand(address, 0x20, 0x00, 0x00, zoomNibble);
+    }
+
+    /** PTZ preset operations: set (0x81), call (0x82), delete (0x83) */
+    public static String ptzPresetSet(int address, int presetNo) {
+        return encodePtzCommand(address, 0x81, 0x00, presetNo & 0xFF, 0x00);
+    }
+
+    public static String ptzPresetCall(int address, int presetNo) {
+        return encodePtzCommand(address, 0x82, 0x00, presetNo & 0xFF, 0x00);
+    }
+
+    public static String ptzPresetDelete(int address, int presetNo) {
+        return encodePtzCommand(address, 0x83, 0x00, presetNo & 0xFF, 0x00);
+    }
+
     public SipCommandResult sendMessage(String deviceId, String xml) {
         if (!appProperties.getGb28181().isEnabled()) {
             return SipCommandResult.skipped("SIP信令未启用，已跳过MESSAGE");
@@ -1004,13 +1174,25 @@ public class SipSignalService implements SipListener {
         int streamMode = command.streamMode();
         boolean tcpMode = streamMode != 0;
         String mediaIp = resolveInviteMediaIp(command.announcedMediaIp());
+        boolean isPlayback = command.startTime() != null && !command.startTime().isBlank();
         StringBuilder builder = new StringBuilder(256);
         builder.append("v=0").append("\r\n");
         builder.append("o=").append(command.channelId()).append(" 0 0 IN IP4 ").append(mediaIp)
                 .append("\r\n");
-        builder.append("s=Play").append("\r\n");
+        if (isPlayback) {
+            builder.append("s=Playback").append("\r\n");
+            builder.append("u=").append(command.channelId()).append(":3").append("\r\n");
+        } else {
+            builder.append("s=Play").append("\r\n");
+        }
         builder.append("c=IN IP4 ").append(mediaIp).append("\r\n");
-        builder.append("t=0 0").append("\r\n");
+        if (isPlayback) {
+            long startNtp = toNtpTimestamp(command.startTime());
+            long endNtp = toNtpTimestamp(command.endTime());
+            builder.append("t=").append(startNtp).append(" ").append(endNtp).append("\r\n");
+        } else {
+            builder.append("t=0 0").append("\r\n");
+        }
         builder.append("m=video ").append(command.rtpPort()).append(" ")
                 .append(tcpMode ? "TCP/RTP/AVP" : "RTP/AVP")
                 .append(" 96 97 98").append("\r\n");
@@ -1021,11 +1203,6 @@ public class SipSignalService implements SipListener {
         if (streamMode == 1) {
             builder.append("a=setup:passive").append("\r\n");
             builder.append("a=connection:new").append("\r\n");
-            // ZLMediaKit openRtpServer (tcp_mode=1) only listens on the RTP port, but some
-            // devices
-            // will try to establish an extra RTCP connection on port+1. Use rtcp-mux to
-            // force
-            // single-port transport and improve compatibility (e.g. EasyGBD simulator).
             builder.append("a=rtcp-mux").append("\r\n");
         } else if (streamMode == 2) {
             builder.append("a=setup:active").append("\r\n");
@@ -1034,6 +1211,25 @@ public class SipSignalService implements SipListener {
         }
         builder.append("y=").append(command.ssrc()).append("\r\n");
         return builder.toString();
+    }
+
+    /**
+     * Convert GB28181 timestamp (yyyy-MM-dd'T'HH:mm:ss) to NTP timestamp.
+     * NTP epoch is 1900-01-01, Unix epoch is 1970-01-01, difference = 2208988800L.
+     */
+    private long toNtpTimestamp(String gbTime) {
+        if (gbTime == null || gbTime.isBlank()) {
+            return 0;
+        }
+        try {
+            java.time.LocalDateTime ldt = java.time.LocalDateTime.parse(gbTime,
+                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+            long epochSecond = ldt.toEpochSecond(java.time.ZoneOffset.of("+08:00"));
+            return epochSecond + 2208988800L;
+        } catch (Exception ex) {
+            log.warn("toNtpTimestamp parse failed: {}", gbTime, ex);
+            return 0;
+        }
     }
 
     private String resolveInviteMediaIp(String announcedMediaIp) {
@@ -1235,6 +1431,24 @@ public class SipSignalService implements SipListener {
         return prefix + mid + String.format("%04d", seq);
     }
 
+    /**
+     * Generate SSRC for playback streams — prefix is always "1" per GB28181 spec.
+     */
+    public String generatePlaybackSsrc() {
+        String domain = appProperties.getGb28181().getDomain();
+        String mid = "00000";
+        if (domain != null) {
+            String normalized = domain.trim();
+            if (normalized.length() >= 8) {
+                mid = normalized.substring(3, 8);
+            } else if (!normalized.isBlank()) {
+                mid = String.format("%-5s", normalized).replace(' ', '0');
+            }
+        }
+        int seq = ssrcSeq.updateAndGet(current -> current >= 9999 ? 1 : current + 1);
+        return "1" + mid + String.format("%04d", seq);
+    }
+
     public record InviteCommand(
             String deviceId,
             String deviceHost,
@@ -1245,7 +1459,9 @@ public class SipSignalService implements SipListener {
             int rtpPort,
             String ssrc,
             String announcedMediaIp,
-            String streamId) {
+            String streamId,
+            String startTime,
+            String endTime) {
     }
 
     public record InviteResult(

@@ -230,6 +230,12 @@ export type GbSubscriptionResult = {
   sipResult: SipCommandResult;
 };
 
+export type GbPlaybackStartResult = {
+  session: GbPlaybackSession;
+  playUrls: Record<string, string>;
+  streamReady: boolean;
+};
+
 export type StoragePolicy = {
   retentionDays: number;
   maxStorageGb: number;
@@ -407,6 +413,29 @@ export const gb28181Api = {
   subscriptions: (deviceId?: string) =>
     apiFetch<GbSubscription[]>(`/api/gb28181/subscriptions${deviceId ? `?deviceId=${deviceId}` : ""}`),
   playbackSessions: () => apiFetch<GbPlaybackSession[]>("/api/gb28181/playback-sessions"),
+
+  // Playback control
+  startPlayback: (deviceId: string, payload: { channelId?: string; startTime: string; endTime: string }) =>
+    apiFetch<GbPlaybackStartResult>(`/api/gb28181/devices/${deviceId}/playback`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  controlPlayback: (sessionId: string, payload: { action: string; speed?: number; seekSeconds?: number }) =>
+    apiFetch<SipCommandResult>(`/api/gb28181/playback-sessions/${sessionId}/control`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  stopPlayback: (sessionId: string) =>
+    apiFetch<void>(`/api/gb28181/playback-sessions/${sessionId}`, {
+      method: "DELETE",
+    }),
+
+  // PTZ control
+  ptzControl: (deviceId: string, payload: { channelId?: string; action: string; speed?: number; presetNo?: number }) =>
+    apiFetch<SipCommandResult>(`/api/gb28181/devices/${deviceId}/ptz`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
 
 export const storageApi = {

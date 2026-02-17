@@ -571,7 +571,9 @@ public class PreviewService {
                 rtpPort,
                 ssrc,
                 announcedMediaIp,
-                streamId));
+                streamId,
+                null,
+                null));
     }
 
     private String resolveProtocol(String protocol) {

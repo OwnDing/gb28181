@@ -49,8 +49,7 @@ public class Gb28181Controller {
                 request.startTime(),
                 request.endTime(),
                 request.secrecy(),
-                request.type()
-        )));
+                request.type())));
     }
 
     @GetMapping("/devices/{deviceId}/profile")
@@ -93,8 +92,7 @@ public class Gb28181Controller {
             @Valid @RequestBody SubscribeRequest request) {
         return ApiResult.success(gb28181Service.subscribe(deviceId, new Gb28181Service.SubscribeCommand(
                 request.eventType(),
-                request.expires()
-        )));
+                request.expires())));
     }
 
     @DeleteMapping("/subscriptions/{id}")
@@ -112,18 +110,73 @@ public class Gb28181Controller {
         return ApiResult.success(gb28181Service.listPlaybackSessions());
     }
 
+    // ===== Playback Control =====
+
+    @PostMapping("/devices/{deviceId}/playback")
+    public ApiResult<Gb28181Service.PlaybackStartResult> startPlayback(
+            @PathVariable @NotBlank(message = "不能为空") String deviceId,
+            @Valid @RequestBody PlaybackRequest request) {
+        return ApiResult.success(gb28181Service.startPlayback(deviceId,
+                new Gb28181Service.PlaybackCommand(request.channelId(), request.startTime(), request.endTime())));
+    }
+
+    @PostMapping("/playback-sessions/{sessionId}/control")
+    public ApiResult<SipSignalService.SipCommandResult> controlPlayback(
+            @PathVariable @NotBlank(message = "不能为空") String sessionId,
+            @Valid @RequestBody PlaybackControlRequest request) {
+        return ApiResult.success(gb28181Service.controlPlayback(sessionId,
+                new Gb28181Service.PlaybackControlCommand(request.action(), request.speed(), request.seekSeconds())));
+    }
+
+    @DeleteMapping("/playback-sessions/{sessionId}")
+    public ApiResult<Void> stopPlayback(
+            @PathVariable @NotBlank(message = "不能为空") String sessionId) {
+        gb28181Service.stopPlayback(sessionId);
+        return ApiResult.success(null);
+    }
+
+    // ===== PTZ Control =====
+
+    @PostMapping("/devices/{deviceId}/ptz")
+    public ApiResult<SipSignalService.SipCommandResult> ptzControl(
+            @PathVariable @NotBlank(message = "不能为空") String deviceId,
+            @Valid @RequestBody PtzRequest request) {
+        return ApiResult.success(gb28181Service.ptzControl(deviceId,
+                new Gb28181Service.PtzCommand(request.channelId(), request.action(), request.speed(),
+                        request.presetNo())));
+    }
+
+    // ===== Request DTOs =====
+
     public record RecordQueryRequest(
             String channelId,
             String startTime,
             String endTime,
             String secrecy,
-            String type
-    ) {
+            String type) {
     }
 
     public record SubscribeRequest(
             @NotBlank(message = "不能为空") String eventType,
-            Integer expires
-    ) {
+            Integer expires) {
+    }
+
+    public record PlaybackRequest(
+            String channelId,
+            @NotBlank(message = "不能为空") String startTime,
+            @NotBlank(message = "不能为空") String endTime) {
+    }
+
+    public record PlaybackControlRequest(
+            @NotBlank(message = "不能为空") String action,
+            Double speed,
+            Long seekSeconds) {
+    }
+
+    public record PtzRequest(
+            String channelId,
+            @NotBlank(message = "不能为空") String action,
+            Integer speed,
+            Integer presetNo) {
     }
 }

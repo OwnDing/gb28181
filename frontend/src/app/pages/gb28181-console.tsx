@@ -40,6 +40,8 @@ export default function Gb28181Console() {
   const [endTime, setEndTime] = useState("");
   const [eventType, setEventType] = useState<SubscribeEvent>("Catalog");
   const [expires, setExpires] = useState("3600");
+  const [ptzSpeed, setPtzSpeed] = useState(128);
+  const [presetNo, setPresetNo] = useState(1);
 
   const [profile, setProfile] = useState<GbDeviceProfile | null>(null);
   const [catalog, setCatalog] = useState<GbCatalogItem[]>([]);
@@ -150,6 +152,51 @@ export default function Gb28181Console() {
 
   const handleUnsubscribe = async (id: number) => {
     await runAction(() => gb28181Api.unsubscribe(id), "取消订阅已发送");
+  };
+
+  const handlePtz = async (action: string) => {
+    if (!selectedDeviceId) { toast.error("请选择设备"); return; }
+    await runAction(
+      () => gb28181Api.ptzControl(selectedDeviceId, { channelId: channelId || undefined, action, speed: ptzSpeed, presetNo }),
+      `云台 ${action} 已发送`,
+    );
+  };
+
+  const handleStartPlayback = async () => {
+    if (!selectedDeviceId) { toast.error("请选择设备"); return; }
+    if (!startTime || !endTime) { toast.error("请填写回放起止时间"); return; }
+    try {
+      setRunning(true);
+      const result = await gb28181Api.startPlayback(selectedDeviceId, {
+        channelId: channelId || undefined, startTime, endTime,
+      });
+      toast.success(`回放已开始, stream=${result.session.streamId}`);
+      if (selectedDeviceId) await loadSnapshots(selectedDeviceId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "回放启动失败");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const handleStopPlayback = async (sessionId: string) => {
+    try {
+      setRunning(true);
+      await gb28181Api.stopPlayback(sessionId);
+      toast.success("回放已停止");
+      if (selectedDeviceId) await loadSnapshots(selectedDeviceId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "回放停止失败");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const handleControlPlayback = async (sessionId: string, action: string) => {
+    await runAction(
+      () => gb28181Api.controlPlayback(sessionId, { action }),
+      `回放 ${action} 已发送`,
+    );
   };
 
   return (
@@ -263,6 +310,9 @@ export default function Gb28181Console() {
             </Button>
             <Button disabled={!selectedDeviceId || running} onClick={handleSubscribe}>
               创建订阅
+            </Button>
+            <Button disabled={!selectedDeviceId || !startTime || !endTime || running} onClick={handleStartPlayback}>
+              开始回放
             </Button>
             <Button
               variant="outline"
@@ -416,16 +466,88 @@ export default function Gb28181Console() {
               <div className="text-sm text-slate-500">暂无回放会话</div>
             ) : (
               playbackSessions.map((item) => (
-                <div key={item.id} className="border rounded-md p-2 text-sm">
-                  <div>{item.channelId}</div>
-                  <div className="text-slate-500">{item.status} / speed={item.speed}</div>
+                <div key={item.id} className="border rounded-md p-3 text-sm">
+                  <div className="flex justify-between items-center">
+                    <div>{item.channelId}</div>
+                    <Badge variant={item.status === "PLAYING" ? "default" : item.status === "CLOSED" ? "secondary" : "outline"}>{item.status}</Badge>
+                  </div>
                   <div className="text-slate-500">{item.startTime} ~ {item.endTime}</div>
+                  <div className="text-slate-500">speed={item.speed} stream={item.streamId}</div>
+                  {item.status !== "CLOSED" && (
+                    <div className="flex gap-1 mt-2">
+                      <Button size="sm" variant="outline" disabled={running} onClick={() => handleControlPlayback(item.sessionId, "PAUSE")}>暂停</Button>
+                      <Button size="sm" variant="outline" disabled={running} onClick={() => handleControlPlayback(item.sessionId, "RESUME")}>继续</Button>
+                      <Button size="sm" variant="outline" disabled={running} onClick={() => handleControlPlayback(item.sessionId, "SPEED")}>倍速</Button>
+                      <Button size="sm" variant="destructive" disabled={running} onClick={() => handleStopPlayback(item.sessionId)}>停止</Button>
+                    </div>
+                  )}
                 </div>
               ))
             )}
           </CardContent>
         </Card>
       </div>
+
+      {/* PTZ Control */}
+      <Card>
+        <CardHeader>
+          <CardTitle>云台控制 (PTZ)</CardTitle>
+          <CardDescription>选择设备后可控制云台方向、缩放和预置点</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Directional pad */}
+            <div className="flex flex-col items-center gap-1">
+              <div className="text-sm font-medium mb-2">方向控制</div>
+              <div className="grid grid-cols-3 gap-1 w-fit">
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("LEFT_UP")}>↖</Button>
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("UP")}>↑</Button>
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("RIGHT_UP")}>↗</Button>
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("LEFT")}>←</Button>
+                <Button size="sm" variant="destructive" disabled={!selectedDeviceId || running} onClick={() => handlePtz("STOP")}>■</Button>
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("RIGHT")}>→</Button>
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("LEFT_DOWN")}>↙</Button>
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("DOWN")}>↓</Button>
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("RIGHT_DOWN")}>↘</Button>
+              </div>
+              <div className="flex gap-2 mt-2">
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("ZOOM_IN")}>放大</Button>
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("ZOOM_OUT")}>缩小</Button>
+              </div>
+            </div>
+            {/* Speed control */}
+            <div className="space-y-3">
+              <div className="text-sm font-medium">云台速度</div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number" min={0} max={255}
+                  value={ptzSpeed}
+                  onChange={(e) => setPtzSpeed(Number(e.target.value))}
+                  className="w-24"
+                />
+                <span className="text-sm text-slate-500">0~255</span>
+              </div>
+            </div>
+            {/* Preset control */}
+            <div className="space-y-3">
+              <div className="text-sm font-medium">预置点</div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number" min={1} max={255}
+                  value={presetNo}
+                  onChange={(e) => setPresetNo(Number(e.target.value))}
+                  className="w-24"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("PRESET_CALL")}>调用</Button>
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("PRESET_SET")}>设置</Button>
+                <Button size="sm" variant="outline" disabled={!selectedDeviceId || running} onClick={() => handlePtz("PRESET_DELETE")}>删除</Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
