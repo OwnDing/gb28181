@@ -9,19 +9,34 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class StorageService {
 
     private static final Logger log = LoggerFactory.getLogger(StorageService.class);
     private static final Set<String> VIDEO_EXTENSIONS = Set.of(
-            "mp4", "mkv", "ts", "flv", "ps", "h264", "h265", "hevc"
-    );
+            "mp4", "mkv", "ts", "flv", "ps", "h264", "h265", "hevc");
+
+    /** Matches ZLM filename pattern: 2026-02-17-17-31-13-0.mp4 */
+    private static final Pattern FILENAME_TIME_PATTERN = Pattern.compile(
+            "(\\d{4})-(\\d{2})-(\\d{2})-(\\d{2})-(\\d{2})-(\\d{2}).*\\.mp4$");
+
+    /** Matches channel directory: ch34020000001320000001 */
+    private static final Pattern CHANNEL_DIR_PATTERN = Pattern.compile("^ch(\\d+)$");
+
+    /** Each MP4 segment is 60 seconds */
+    private static final int SEGMENT_DURATION_SECONDS = 60;
 
     private final StorageRepository storageRepository;
 
@@ -49,8 +64,7 @@ public class StorageService {
                 command.maxStorageGb(),
                 command.autoOverwrite(),
                 command.recordEnabled(),
-                command.recordPath()
-        );
+                command.recordPath());
         ensureRecordPath(policy.recordPath());
         return policy;
     }
@@ -117,6 +131,44 @@ public class StorageService {
         return buildUsage(files, policy.maxStorageGb());
     }
 
+    // ── Playback API support ──────────────────────────────────────
+
+    /** Returns the resolved record path for serving files. */
+    public Path getRecordPath() {
+        return ensureRecordPath(getPolicy().recordPath());
+    }
+
+    /**
+     * Lists distinct channel IDs that have recordings. Triggers a refresh first.
+     */
+    public List<PlaybackChannel> listPlaybackChannels() {
+        StoragePolicy policy = getPolicy();
+        List<RecordFile> files = listVideoFiles(ensureRecordPath(policy.recordPath()));
+        refreshRecordIndex(files);
+        return storageRepository.listDistinctChannels();
+    }
+
+    /** Queries recordings for a given channel on a given date. */
+    public List<RecordFileItem> queryPlaybackRecords(String channelId, String date) {
+        if (channelId == null || channelId.isBlank()) {
+            throw new ApiException(400, "通道ID不能为空");
+        }
+        if (date == null || date.isBlank()) {
+            throw new ApiException(400, "日期不能为空");
+        }
+        // Refresh index first
+        StoragePolicy policy = getPolicy();
+        List<RecordFile> files = listVideoFiles(ensureRecordPath(policy.recordPath()));
+        refreshRecordIndex(files);
+
+        // date is yyyy-MM-dd, construct start/end of day as ISO instants
+        String startTime = date + "T00:00:00";
+        String endTime = date + "T23:59:59";
+        return storageRepository.findRecordsByChannelAndTimeRange(channelId, startTime, endTime);
+    }
+
+    // ── Private helpers ───────────────────────────────────────────
+
     private Path ensureRecordPath(String rawPath) {
         try {
             Path path = Path.of(rawPath);
@@ -165,17 +217,72 @@ public class StorageService {
 
     private void refreshRecordIndex(List<RecordFile> files) {
         List<StorageRepository.RecordSnapshot> snapshots = files.stream()
-                .map(file -> new StorageRepository.RecordSnapshot(
-                        null,
-                        null,
-                        file.path().toString(),
-                        file.size(),
-                        file.modifiedAt().toString(),
-                        file.modifiedAt().toString(),
-                        file.modifiedAt().toString()
-                ))
+                .map(file -> {
+                    String channelId = parseChannelIdFromPath(file.path());
+                    String startTime = parseStartTimeFromFilename(file.path());
+                    String endTime = null;
+                    if (startTime != null) {
+                        try {
+                            LocalDateTime start = LocalDateTime.parse(startTime);
+                            endTime = start.plusSeconds(SEGMENT_DURATION_SECONDS).toString();
+                        } catch (DateTimeParseException ex) {
+                            endTime = startTime;
+                        }
+                    }
+                    if (startTime == null) {
+                        startTime = file.modifiedAt().toString();
+                    }
+                    if (endTime == null) {
+                        endTime = file.modifiedAt().toString();
+                    }
+                    return new StorageRepository.RecordSnapshot(
+                            null,
+                            channelId,
+                            file.path().toString(),
+                            file.size(),
+                            startTime,
+                            endTime,
+                            file.modifiedAt().toString());
+                })
                 .toList();
         storageRepository.refreshRecordFiles(snapshots);
+    }
+
+    /**
+     * Parses channelId from file path. Looks for a parent directory matching
+     * "ch{channelId}".
+     * Example path: .../record/rtp/ch34020000001320000001/2026-02-17/xxx.mp4
+     */
+    private String parseChannelIdFromPath(Path filePath) {
+        Path parent = filePath.getParent();
+        while (parent != null) {
+            String dirName = parent.getFileName() != null ? parent.getFileName().toString() : "";
+            Matcher matcher = CHANNEL_DIR_PATTERN.matcher(dirName);
+            if (matcher.matches()) {
+                return matcher.group(1);
+            }
+            parent = parent.getParent();
+        }
+        return null;
+    }
+
+    /**
+     * Parses start time from filename. Expected format: 2026-02-17-17-31-13-0.mp4
+     * Returns ISO LocalDateTime string: 2026-02-17T17:31:13
+     */
+    private String parseStartTimeFromFilename(Path filePath) {
+        String filename = filePath.getFileName().toString();
+        Matcher matcher = FILENAME_TIME_PATTERN.matcher(filename);
+        if (matcher.matches()) {
+            String year = matcher.group(1);
+            String month = matcher.group(2);
+            String day = matcher.group(3);
+            String hour = matcher.group(4);
+            String minute = matcher.group(5);
+            String second = matcher.group(6);
+            return "%s-%s-%sT%s:%s:%s".formatted(year, month, day, hour, minute, second);
+        }
+        return null;
     }
 
     private StorageUsage buildUsage(List<RecordFile> files, int maxStorageGb) {
@@ -201,8 +308,7 @@ public class StorageService {
                 maxStorageGb,
                 usagePercent,
                 oldest,
-                newest
-        );
+                newest);
     }
 
     private boolean safeDelete(Path path) {
@@ -219,8 +325,10 @@ public class StorageService {
             int maxStorageGb,
             boolean autoOverwrite,
             boolean recordEnabled,
-            String recordPath
-    ) {
+            String recordPath) {
+    }
+
+    public record PlaybackChannel(String channelId, int fileCount) {
     }
 
     private record RecordFile(Path path, long size, Instant modifiedAt) {

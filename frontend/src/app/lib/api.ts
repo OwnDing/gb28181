@@ -446,3 +446,37 @@ export const alarmApi = {
     return apiFetch<GbAlarmEvent[]>(`/api/alarms${suffix}`);
   },
 };
+
+// ── Playback (historical video) ───────────────────────────────
+
+export type PlaybackChannel = {
+  channelId: string;
+  fileCount: number;
+};
+
+export type PlaybackRecord = {
+  id: number;
+  deviceId?: string | null;
+  channelId?: string | null;
+  filePath: string;
+  fileSizeBytes: number;
+  startTime?: string | null;
+  endTime?: string | null;
+  createdAt: string;
+};
+
+export const playbackApi = {
+  channels: () => apiFetch<PlaybackChannel[]>("/api/playback/channels"),
+  records: (channelId: string, date: string) =>
+    apiFetch<PlaybackRecord[]>(
+      `/api/playback/records?channelId=${encodeURIComponent(channelId)}&date=${encodeURIComponent(date)}`
+    ),
+  /** Build a video URL that the browser can fetch directly (with auth via cookie or query). */
+  videoUrl: (filePath: string): string => {
+    const recordRoot = filePath;
+    const API_BASE =
+      (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE ??
+      "";
+    return `${API_BASE}/api/playback/video?path=${encodeURIComponent(recordRoot)}`;
+  },
+};

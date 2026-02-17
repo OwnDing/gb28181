@@ -3,6 +3,7 @@ import Login from "./pages/login";
 import Layout from "./pages/layout";
 import DeviceManagement from "./pages/device-management";
 import VideoPreview from "./pages/video-preview";
+import VideoPlayback from "./pages/video-playback";
 import StorageSettings from "./pages/storage-settings";
 import Gb28181Console from "./pages/gb28181-console";
 import AlarmHistory from "./pages/alarm-history";
@@ -27,6 +28,10 @@ export const router = createBrowserRouter([
       {
         path: "video-preview",
         Component: VideoPreview,
+      },
+      {
+        path: "video-playback",
+        Component: VideoPlayback,
       },
       {
         path: "storage-settings",
