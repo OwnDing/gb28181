@@ -34,6 +34,29 @@ graph TD
     AI -->|Alarm API| Backend
 ```
 
+## 📸 Screenshots / 系统截图
+
+### 1. Login / 登录
+![Login](pic/0-登入.png)
+
+### 2. Device Management / 设备管理
+![Device Management](pic/1-设备管理.png)
+
+### 3. Live Preview / 在线预览
+![Live Preview](pic/2-在线预览.png)
+
+### 4. Playback / 录像回看
+![Playback](pic/3-录像回看.png)
+
+### 5. Storage Settings / 存储设置
+![Storage Settings](pic/4-存储设置.png)
+
+### 6. Capability Center / 能力中心
+![Capability Center](pic/5-能力中心.png)
+
+### 7. Smart Alarm / 智能报警
+![Smart Alarm](pic/6-智能报警.png)
+
 ## ✨ Features / 系统功能
 
 ### 1. Device Management / 设备管理
