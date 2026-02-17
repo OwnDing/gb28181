@@ -1,4 +1,3 @@
-
 # GB28181 Video Surveillance Platform / GB28181 视频监控平台
 
 A modern, high-performance video surveillance management platform based on the GB/T 28181-2016 standard. Supports device auto-registration, real-time preview (H.264/H.265), cloud storage management, and AI-powered object detection.
@@ -66,6 +65,14 @@ graph TD
     -   **目标检测**：内置 YOLOv8 模型，支持目标（如：人）检测。
 -   **Smart Alarms**: Generates alarms with snapshots when targets are detected.
     -   **智能报警**：检测到目标时自动生成报警并抓拍快照。
+
+### 5. PTZ Control / 云台控制
+-   **Pan, Tilt, Zoom**: Control camera movement and zoom levels via API.
+    -   **云台转动与变焦**：通过 API 控制摄像头的移动和变焦。
+-   **Integration**: Seamlessly integrates with the GB28181 protocol for real-time PTZ operations.
+    -   **集成**：与 GB28181 协议无缝集成，实现实时云台操作。
+-   **Customizable**: Supports custom PTZ presets and patrol routes.
+    -   **可定制**：支持自定义云台预置位和巡航路径。
 
 ## 🚀 Getting Started / 快速开始
 
