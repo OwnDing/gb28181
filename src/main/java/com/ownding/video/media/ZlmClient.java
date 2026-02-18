@@ -17,6 +17,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class ZlmClient {
@@ -76,7 +77,7 @@ public class ZlmClient {
                                     "streamId", streamId))
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(2));
+                    .toFuture().get(2, TimeUnit.SECONDS);
         } catch (Exception ex) {
             log.warn("closeRtpServer exception: {}", ex.getMessage());
         }
@@ -350,7 +351,7 @@ public class ZlmClient {
                     .bodyValue(offerSdp)
                     .retrieve()
                     .bodyToMono(Map.class)
-                    .block(Duration.ofSeconds(5));
+                    .toFuture().get(5, TimeUnit.SECONDS);
             if (response == null) {
                 throw new ApiException(502, "ZLMediaKit WebRTC 返回为空");
             }
@@ -439,7 +440,7 @@ public class ZlmClient {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> requestOpenRtpServer(String streamId, int tcpMode, String ssrc) {
+    private Map<String, Object> requestOpenRtpServer(String streamId, int tcpMode, String ssrc) throws Exception {
         String baseUrl = trimTrailingSlash(appProperties.getZlm().getBaseUrl());
         UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(baseUrl)
                 .path("/index/api/openRtpServer")
@@ -454,11 +455,12 @@ public class ZlmClient {
                 .uri(uriBuilder.build(true).toUri())
                 .retrieve()
                 .bodyToMono(Map.class)
-                .block(Duration.ofSeconds(3));
+                .toFuture().get(3, TimeUnit.SECONDS);
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> requestRecordControl(String path, String app, String streamId, String customPath) {
+    private Map<String, Object> requestRecordControl(String path, String app, String streamId, String customPath)
+            throws Exception {
         String baseUrl = trimTrailingSlash(appProperties.getZlm().getBaseUrl());
         UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(baseUrl)
                 .path(path)
@@ -474,11 +476,11 @@ public class ZlmClient {
                 .uri(uriBuilder.build(true).toUri())
                 .retrieve()
                 .bodyToMono(Map.class)
-                .block(Duration.ofSeconds(3));
+                .toFuture().get(3, TimeUnit.SECONDS);
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> requestMediaList(String app, String streamId) {
+    private Map<String, Object> requestMediaList(String app, String streamId) throws Exception {
         String baseUrl = trimTrailingSlash(appProperties.getZlm().getBaseUrl());
         UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(baseUrl)
                 .path("/index/api/getMediaList")
@@ -493,7 +495,7 @@ public class ZlmClient {
                 .uri(uriBuilder.build(true).toUri())
                 .retrieve()
                 .bodyToMono(Map.class)
-                .block(Duration.ofSeconds(3));
+                .toFuture().get(3, TimeUnit.SECONDS);
     }
 
     private boolean isSuccess(Map<String, Object> response) {
