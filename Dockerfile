@@ -35,4 +35,6 @@ FROM openjdk:25-ea-jdk-slim
 WORKDIR /app
 COPY --from=backend-builder /app/target/*.jar app.jar
 EXPOSE 8081 5060/udp 5060/tcp
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-Xmx128m", "-Xms64m", "-XX:+UseSerialGC", \
+    "-Dio.netty.allocator.maxOrder=6", \
+    "-jar", "app.jar"]

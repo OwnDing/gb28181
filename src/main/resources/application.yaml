@@ -4,6 +4,9 @@ spring:
   datasource:
     url: jdbc:sqlite:./video.db
     driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 2
+      minimum-idle: 1
   sql:
     init:
       mode: always

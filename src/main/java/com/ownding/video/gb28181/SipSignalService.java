@@ -754,7 +754,66 @@ public class SipSignalService implements SipListener {
     public void processDialogTerminated(javax.sip.DialogTerminatedEvent dialogTerminatedEvent) {
         Dialog dialog = dialogTerminatedEvent.getDialog();
         if (dialog != null && dialog.getCallId() != null) {
-            dialogByCallId.remove(dialog.getCallId().getCallId());
+            String callId = dialog.getCallId().getCallId();
+            dialogByCallId.remove(callId);
+            endpointByCallId.remove(callId);
+        }
+    }
+
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 300_000)
+    public void cleanupStaleDialogs() {
+        int removedDialogs = 0;
+        int removedEndpoints = 0;
+        int removedInvites = 0;
+        int removedCommands = 0;
+
+        // Clean terminated dialogs
+        var dialogIterator = dialogByCallId.entrySet().iterator();
+        while (dialogIterator.hasNext()) {
+            var entry = dialogIterator.next();
+            Dialog dialog = entry.getValue();
+            if (dialog == null || dialog.getState() == DialogState.TERMINATED) {
+                dialogIterator.remove();
+                endpointByCallId.remove(entry.getKey());
+                removedDialogs++;
+            }
+        }
+
+        // Clean orphaned endpoints (callId no longer has a dialog)
+        var endpointIterator = endpointByCallId.entrySet().iterator();
+        while (endpointIterator.hasNext()) {
+            var entry = endpointIterator.next();
+            if (!dialogByCallId.containsKey(entry.getKey())
+                    && !pendingInviteByCallId.containsKey(entry.getKey())) {
+                endpointIterator.remove();
+                removedEndpoints++;
+            }
+        }
+
+        // Clean stuck pending invite futures (should have completed within timeout)
+        var inviteIterator = pendingInviteByCallId.entrySet().iterator();
+        while (inviteIterator.hasNext()) {
+            var entry = inviteIterator.next();
+            if (entry.getValue().isDone()) {
+                inviteIterator.remove();
+                removedInvites++;
+            }
+        }
+
+        // Clean stuck pending command futures
+        var commandIterator = pendingCommandByCallId.entrySet().iterator();
+        while (commandIterator.hasNext()) {
+            var entry = commandIterator.next();
+            if (entry.getValue().isDone()) {
+                commandIterator.remove();
+                removedCommands++;
+            }
+        }
+
+        int total = removedDialogs + removedEndpoints + removedInvites + removedCommands;
+        if (total > 0) {
+            log.info("SIP cleanup: removed {} dialogs, {} endpoints, {} invites, {} commands",
+                    removedDialogs, removedEndpoints, removedInvites, removedCommands);
         }
     }
 
