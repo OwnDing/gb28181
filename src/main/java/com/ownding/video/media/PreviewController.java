@@ -53,7 +53,8 @@ public class PreviewController {
     public Mono<ApiResult<PreviewService.WebRtcAnswer>> playWebRtc(@Valid @RequestBody WebRtcPlayRequest request) {
         return Mono.fromCallable(() -> ApiResult.success(previewService.playWebRtc(
                         request.sessionId(),
-                        request.offerSdp()
+                        request.offerSdp(),
+                        request.preferredTcp()
                 )))
                 .subscribeOn(Schedulers.boundedElastic());
     }
@@ -71,7 +72,8 @@ public class PreviewController {
 
     public record WebRtcPlayRequest(
             @NotBlank(message = "不能为空") String sessionId,
-            @NotBlank(message = "不能为空") String offerSdp
+            @NotBlank(message = "不能为空") String offerSdp,
+            boolean preferredTcp
     ) {
     }
 }

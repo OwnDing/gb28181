@@ -105,6 +105,7 @@ export type PreviewSessionStatus = {
 export type PreviewWebRtcPlayRequest = {
   sessionId: string;
   offerSdp: string;
+  preferredTcp?: boolean;
 };
 
 export type PreviewWebRtcPlayResponse = {

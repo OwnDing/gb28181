@@ -334,7 +334,8 @@ public class ZlmClient {
     }
 
     @SuppressWarnings("unchecked")
-    public PreviewService.WebRtcAnswer playWebRtc(String app, String streamId, String offerSdp) {
+    public PreviewService.WebRtcAnswer playWebRtc(String app, String streamId, String offerSdp,
+            boolean preferredTcp) {
         try {
             String baseUrl = trimTrailingSlash(appProperties.getZlm().getBaseUrl());
             UriComponentsBuilder uriBuilder = UriComponentsBuilder.fromUriString(baseUrl)
@@ -343,6 +344,9 @@ public class ZlmClient {
                     .queryParam("app", app)
                     .queryParam("stream", streamId)
                     .queryParam("type", "play");
+            if (preferredTcp) {
+                uriBuilder.queryParam("preferred_tcp", 1);
+            }
 
             Map<String, Object> response = webClient.post()
                     .uri(uriBuilder.build(true).toUri())

@@ -50,26 +50,6 @@ function supportsH265Browser() {
   return hevcChecks.some((item) => video.canPlayType(item) !== "");
 }
 
-function waitForIceGatheringComplete(peer: RTCPeerConnection, timeoutMs = 3000) {
-  if (peer.iceGatheringState === "complete") {
-    return Promise.resolve();
-  }
-  return new Promise<void>((resolve) => {
-    const done = () => {
-      window.clearTimeout(timer);
-      peer.removeEventListener("icegatheringstatechange", onStateChange);
-      resolve();
-    };
-    const onStateChange = () => {
-      if (peer.iceGatheringState === "complete") {
-        done();
-      }
-    };
-    const timer = window.setTimeout(done, timeoutMs);
-    peer.addEventListener("icegatheringstatechange", onStateChange);
-  });
-}
-
 function WebRtcPlayer({ sessionId }: { sessionId: string }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -83,33 +63,84 @@ function WebRtcPlayer({ sessionId }: { sessionId: string }) {
       return;
     }
 
-    const peer = new RTCPeerConnection({ iceServers: [] });
-    peerRef.current = peer;
-    let fallbackStream: MediaStream | null = null;
-
-    peer.ontrack = (event) => {
-      if (disposed || !videoRef.current) {
-        return;
+    const closePeer = () => {
+      const peerConnection = peerRef.current;
+      peerRef.current = null;
+      if (peerConnection) {
+        peerConnection.ontrack = null;
+        peerConnection.onconnectionstatechange = null;
+        peerConnection.close();
       }
-      if (event.streams && event.streams.length > 0) {
-        videoRef.current.srcObject = event.streams[0];
-        return;
-      }
-      if (!fallbackStream) {
-        fallbackStream = new MediaStream();
-      }
-      fallbackStream.addTrack(event.track);
-      videoRef.current.srcObject = fallbackStream;
     };
 
-    const start = async () => {
-      setErrorText("");
+    const startOnce = async (preferredTcp: boolean) => {
+      closePeer();
+      const peer = new RTCPeerConnection({ iceServers: [] });
+      peerRef.current = peer;
+
+      let fallbackStream: MediaStream | null = null;
+      let settled = false;
+      const streamReady = new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          reject(new Error("WebRTC 收流超时"));
+        }, 10000);
+
+        const resolveOnce = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          window.clearTimeout(timer);
+          resolve();
+        };
+
+        const rejectOnce = (message: string) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          window.clearTimeout(timer);
+          reject(new Error(message));
+        };
+
+        peer.ontrack = (event) => {
+          if (disposed || !videoRef.current) {
+            return;
+          }
+          if (event.streams && event.streams.length > 0) {
+            videoRef.current.srcObject = event.streams[0];
+          } else {
+            if (!fallbackStream) {
+              fallbackStream = new MediaStream();
+            }
+            fallbackStream.addTrack(event.track);
+            videoRef.current.srcObject = fallbackStream;
+          }
+          videoRef.current.play().catch(() => undefined);
+          resolveOnce();
+        };
+
+        peer.onconnectionstatechange = () => {
+          if (disposed) {
+            return;
+          }
+          const state = peer.connectionState;
+          if (state === "failed" || state === "closed" || state === "disconnected") {
+            rejectOnce(`WebRTC 连接失败 (${state})`);
+          }
+        };
+      });
+      streamReady.catch(() => undefined);
+
       peer.addTransceiver("video", { direction: "recvonly" });
       peer.addTransceiver("audio", { direction: "recvonly" });
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
-      await waitForIceGatheringComplete(peer, 3000);
-      const offerSdp = peer.localDescription?.sdp;
+      const offerSdp = offer.sdp;
       if (!offerSdp) {
         throw new Error("未能生成本地 SDP");
       }
@@ -117,6 +148,7 @@ function WebRtcPlayer({ sessionId }: { sessionId: string }) {
       const answer = await previewApi.webrtcPlay({
         sessionId,
         offerSdp,
+        preferredTcp,
       });
       if (disposed) {
         return;
@@ -126,8 +158,18 @@ function WebRtcPlayer({ sessionId }: { sessionId: string }) {
         type: "answer",
         sdp: answer.sdp,
       });
-      if (videoRef.current) {
-        await videoRef.current.play().catch(() => undefined);
+      await streamReady;
+    };
+
+    const start = async () => {
+      setErrorText("");
+      try {
+        await startOnce(false);
+      } catch {
+        if (disposed) {
+          return;
+        }
+        await startOnce(true);
       }
     };
 
@@ -136,16 +178,12 @@ function WebRtcPlayer({ sessionId }: { sessionId: string }) {
         return;
       }
       setErrorText(error instanceof Error ? error.message : "WebRTC 预览失败");
+      closePeer();
     });
 
     return () => {
       disposed = true;
-      const peerConnection = peerRef.current;
-      peerRef.current = null;
-      if (peerConnection) {
-        peerConnection.ontrack = null;
-        peerConnection.close();
-      }
+      closePeer();
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }

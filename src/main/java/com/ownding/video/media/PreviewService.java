@@ -411,7 +411,7 @@ public class PreviewService {
                 holder.updatedAt);
     }
 
-    public WebRtcAnswer playWebRtc(String sessionId, String offerSdp) {
+    public WebRtcAnswer playWebRtc(String sessionId, String offerSdp, boolean preferredTcp) {
         SessionHolder holder = sessionById.get(sessionId);
         if (holder == null) {
             throw new ApiException(404, "预览会话不存在或已结束");
@@ -419,7 +419,7 @@ public class PreviewService {
         if (!zlmClient.isStreamReady(holder.app, holder.streamId)) {
             throw new ApiException(409, "流未就绪，请重新发起预览");
         }
-        WebRtcAnswer answer = zlmClient.playWebRtc(holder.app, holder.streamId, offerSdp);
+        WebRtcAnswer answer = zlmClient.playWebRtc(holder.app, holder.streamId, offerSdp, preferredTcp);
         holder.updatedAt = Instant.now().toString();
         return answer;
     }
