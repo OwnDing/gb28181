@@ -137,6 +137,41 @@ graph TD
     -   **API Doc**: http://localhost:8080/swagger-ui.html
     -   **Default Account**: `admin` / `admin123`
 
+## 🪟 Windows Packaging & Run / Windows 打包与运行
+
+Use the built-in script to build frontend + backend and package a self-contained Windows app image.
+使用仓库内置脚本即可完成前后端构建，并打包为自包含 Windows 应用（无需额外安装 Java 运行时）。
+
+### 1. Prerequisites / 前置要求
+-   Windows 10/11
+-   PowerShell
+-   Node.js + npm
+-   JDK 25（默认脚本路径：`C:\Program Files\Eclipse Adoptium\jdk-25.0.0.36-hotspot`）
+
+### 2. Build / 打包
+
+```powershell
+.\build-windows.ps1
+```
+
+If your JDK is installed in another location, pass `-JavaHome`:
+如果 JDK 路径不同，可显式传入：
+
+```powershell
+.\build-windows.ps1 -JavaHome "C:\Path\To\JDK25"
+```
+
+### 3. Run / 运行
+
+After packaging, the output is under `dist\video`:
+打包完成后产物位于 `dist\video`：
+
+-   `dist\video\video.exe`
+-   `dist\video\run.bat`
+
+Run either one to start the application.
+执行任意一个即可启动程序。
+
 ## 🤖 AI Service Usage / AI 服务使用
 
 The AI service runs separately and connects to ZLMediaKit to process video streams for object detection.
