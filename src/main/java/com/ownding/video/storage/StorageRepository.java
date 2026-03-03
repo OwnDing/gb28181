@@ -6,10 +6,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 @Repository
 public class StorageRepository {
+
+    private static final String POSIX_DEFAULT_RECORD_PATH = "./data/records";
+    private static final String WINDOWS_DEFAULT_RECORD_PATH = "C:\\record";
 
     private final JdbcClient jdbcClient;
 
@@ -18,6 +22,7 @@ public class StorageRepository {
     }
 
     public StoragePolicy getPolicy() {
+        String defaultRecordPath = resolveDefaultRecordPath();
         Optional<StoragePolicy> policy = jdbcClient.sql("""
                 SELECT retention_days, max_storage_gb, auto_overwrite, record_enabled, record_path, updated_at
                 FROM storage_policy
@@ -31,7 +36,9 @@ public class StorageRepository {
                         rs.getString("record_path"),
                         rs.getString("updated_at")))
                 .optional();
-        return policy.orElseGet(this::createDefaultPolicy);
+
+        StoragePolicy existing = policy.orElseGet(() -> createDefaultPolicy(defaultRecordPath));
+        return normalizeDefaultRecordPath(existing, defaultRecordPath);
     }
 
     public StoragePolicy updatePolicy(int retentionDays, int maxStorageGb, boolean autoOverwrite, boolean recordEnabled,
@@ -161,16 +168,70 @@ public class StorageRepository {
                 .list();
     }
 
-    private StoragePolicy createDefaultPolicy() {
+    private StoragePolicy createDefaultPolicy(String defaultRecordPath) {
         String now = Instant.now().toString();
         jdbcClient.sql("""
                 INSERT OR REPLACE INTO storage_policy (
                     id, retention_days, max_storage_gb, auto_overwrite, record_enabled, record_path, updated_at
-                ) VALUES (1, 7, 100, 1, 1, './data/records', :now)
+                ) VALUES (1, 7, 100, 1, 1, :recordPath, :now)
                 """)
+                .param("recordPath", defaultRecordPath)
                 .param("now", now)
                 .update();
-        return getPolicy();
+        return new StoragePolicy(7, 100, true, true, defaultRecordPath, now);
+    }
+
+    private StoragePolicy normalizeDefaultRecordPath(StoragePolicy policy, String defaultRecordPath) {
+        boolean shouldReplace = shouldReplaceDefaultRecordPath(policy, defaultRecordPath);
+        if (!shouldReplace) {
+            return policy;
+        }
+
+        String now = Instant.now().toString();
+        jdbcClient.sql("""
+                UPDATE storage_policy
+                SET record_path = :recordPath,
+                    updated_at = :updatedAt
+                WHERE id = 1
+                """)
+                .param("recordPath", defaultRecordPath)
+                .param("updatedAt", now)
+                .update();
+
+        return new StoragePolicy(
+                policy.retentionDays(),
+                policy.maxStorageGb(),
+                policy.autoOverwrite(),
+                policy.recordEnabled(),
+                defaultRecordPath,
+                now);
+    }
+
+    private String resolveDefaultRecordPath() {
+        String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        if (osName.contains("win")) {
+            return WINDOWS_DEFAULT_RECORD_PATH;
+        }
+        return POSIX_DEFAULT_RECORD_PATH;
+    }
+
+    private boolean shouldReplaceDefaultRecordPath(StoragePolicy policy, String defaultRecordPath) {
+        String recordPath = policy.recordPath();
+        if (recordPath == null || recordPath.isBlank()) {
+            return true;
+        }
+
+        // One-time migration for rows seeded by historical SQL init values on Windows.
+        return WINDOWS_DEFAULT_RECORD_PATH.equals(defaultRecordPath)
+                && POSIX_DEFAULT_RECORD_PATH.equals(recordPath)
+                && looksLikeLegacySqliteTimestamp(policy.updatedAt());
+    }
+
+    private boolean looksLikeLegacySqliteTimestamp(String updatedAt) {
+        if (updatedAt == null || updatedAt.isBlank()) {
+            return true;
+        }
+        return updatedAt.contains(" ") && !updatedAt.contains("T");
     }
 
     public record RecordSnapshot(

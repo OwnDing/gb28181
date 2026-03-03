@@ -31,6 +31,17 @@ type EditablePolicy = {
   recordPath: string;
 };
 
+const POSIX_DEFAULT_RECORD_PATH = "./data/records";
+const WINDOWS_DEFAULT_RECORD_PATH = "C:\\record";
+
+function resolveUiDefaultRecordPath(): string {
+  if (typeof navigator === "undefined") {
+    return POSIX_DEFAULT_RECORD_PATH;
+  }
+  const platform = `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
+  return platform.includes("win") ? WINDOWS_DEFAULT_RECORD_PATH : POSIX_DEFAULT_RECORD_PATH;
+}
+
 export default function StorageSettings() {
   const [policy, setPolicy] = useState<StoragePolicy | null>(null);
   const [draft, setDraft] = useState<EditablePolicy>({
@@ -38,7 +49,7 @@ export default function StorageSettings() {
     maxStorageGb: 100,
     autoOverwrite: true,
     recordEnabled: true,
-    recordPath: "./data/records",
+    recordPath: resolveUiDefaultRecordPath(),
   });
   const [usage, setUsage] = useState<StorageUsage | null>(null);
   const [records, setRecords] = useState<RecordFileItem[]>([]);

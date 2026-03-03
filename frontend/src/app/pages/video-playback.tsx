@@ -24,27 +24,13 @@ import {
 } from "../lib/api";
 import { getToken } from "../lib/http";
 
-/** Convert a relative file path from the record DB into a playable video URL. */
+/** Convert a record file path from DB into a playable video URL. */
 function buildVideoUrl(filePath: string): string {
-    // filePath is an absolute path like C:\...\data\records\record\rtp\ch...\2026-02-17\xxx.mp4
-    // We need to extract the relative part after the record root (./data/records)
-    // The backend expects a relative path from the record root
-    const markers = ["data/records/", "data\\records\\"];
-    let relativePath = filePath;
-    for (const marker of markers) {
-        const idx = filePath.indexOf(marker);
-        if (idx >= 0) {
-            relativePath = filePath.substring(idx + marker.length);
-            break;
-        }
-    }
-    // Normalize to forward slashes
-    relativePath = relativePath.replace(/\\/g, "/");
+    const normalizedPath = filePath.replace(/\\/g, "/");
 
     const API_BASE =
         (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE ?? "";
-    const token = getToken();
-    const url = `${API_BASE}/api/playback/video?path=${encodeURIComponent(relativePath)}`;
+    const url = `${API_BASE}/api/playback/video?path=${encodeURIComponent(normalizedPath)}`;
     // We need to pass auth token, but <video> doesn't support Bearer header.
     // We'll handle this via fetch + blob URL instead.
     return url;

@@ -56,12 +56,12 @@ CREATE TABLE IF NOT EXISTS storage_policy (
     max_storage_gb INTEGER NOT NULL DEFAULT 100,
     auto_overwrite INTEGER NOT NULL DEFAULT 1,
     record_enabled INTEGER NOT NULL DEFAULT 1,
-    record_path TEXT NOT NULL DEFAULT './data/records',
+    record_path TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
 );
 
 INSERT OR IGNORE INTO storage_policy (id, retention_days, max_storage_gb, auto_overwrite, record_enabled, record_path, updated_at)
-VALUES (1, 7, 100, 1, 1, './data/records', datetime('now'));
+VALUES (1, 7, 100, 1, 1, '', datetime('now'));
 
 CREATE TABLE IF NOT EXISTS record_file (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
