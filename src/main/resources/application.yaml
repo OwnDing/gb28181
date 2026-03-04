@@ -22,9 +22,9 @@ app:
     default-admin-username: admin
     default-admin-password: admin123
   zlm:
-    base-url: ${APP_ZLM_BASE_URL:http://192.168.254.202:80}
+    base-url: ${APP_ZLM_BASE_URL:http://127.0.0.1:80}
     secret: ${APP_ZLM_SECRET:ntModmVZiUw6arPbJiiuhfGC7FzNgWLx}
-    public-base-url: ${APP_ZLM_PUBLIC_BASE_URL:http://192.168.254.202:80}
+    public-base-url: ${APP_ZLM_PUBLIC_BASE_URL:http://127.0.0.1:80}
     media-http-port: 80
     default-app: rtp
   preview:
@@ -37,10 +37,10 @@ app:
   gb28181:
     enabled: true
     auto-register-unknown-device: true
-    local-ip: ${APP_GB28181_LOCAL_IP:192.168.254.202}
+    local-ip: ${APP_GB28181_LOCAL_IP:127.0.0.1}
     local-bind-ip: ${APP_GB28181_LOCAL_BIND_IP:0.0.0.0}
     local-port: 5060
-    media-ip: ${APP_GB28181_MEDIA_IP:192.168.254.202}
+    media-ip: ${APP_GB28181_MEDIA_IP:127.0.0.1}
     server-id: 34020000002000000001
     domain: 3402000000
     user-agent: video-gb28181
