@@ -1,5 +1,6 @@
 package com.ownding.video.gb28181;
 
+import com.ownding.video.common.ApiResult;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
@@ -29,8 +30,8 @@ public class AlarmController {
     }
 
     @GetMapping
-    public List<GbAlarmEvent> listAlarms(@RequestParam(defaultValue = "100") int limit) {
-        return repository.listAlarms(limit);
+    public ApiResult<List<GbAlarmEvent>> listAlarms(@RequestParam(defaultValue = "100") int limit) {
+        return ApiResult.success(repository.listAlarms(limit));
     }
 
     @PostMapping

@@ -151,6 +151,18 @@
     font-family: var(--app-font-sans);
   }
 
+  [data-sonner-toaster],
+  [data-sonner-toast],
+  [data-sonner-toast] *,
+  [data-slot="dialog-content"],
+  [data-slot="dialog-content"] *,
+  [data-slot="drawer-content"],
+  [data-slot="drawer-content"] *,
+  [data-slot="sheet-content"],
+  [data-slot="sheet-content"] * {
+    font-family: var(--app-font-sans);
+  }
+
   h1 {
     font-size: var(--text-2xl);
     font-weight: var(--font-weight-medium);

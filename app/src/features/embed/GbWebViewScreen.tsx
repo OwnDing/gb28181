@@ -4,8 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   BackHandler,
-  Linking,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -14,7 +12,6 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 
-const DEFAULT_DEV_PORT = 5173;
 const DEFAULT_LAN_EMBED_HOST = "http://192.168.6.230:5173";
 
 function buildEmbedUrl(baseUrl: string) {
@@ -26,14 +23,7 @@ function buildEmbedUrl(baseUrl: string) {
 }
 
 function getDefaultDevHost() {
-  if (Device.isDevice) {
-    return DEFAULT_LAN_EMBED_HOST;
-  }
-
-  return Platform.select({
-    android: DEFAULT_LAN_EMBED_HOST,
-    default: DEFAULT_LAN_EMBED_HOST,
-  });
+  return DEFAULT_LAN_EMBED_HOST;
 }
 
 function getEmbedUrl() {
@@ -88,29 +78,16 @@ export function GbWebViewScreen() {
   }
 
   return (
-    <SafeAreaView edges={["top", "left", "right"]} style={styles.safeArea}>
+    <SafeAreaView edges={["top", "left", "right", "bottom"]} style={styles.safeArea}>
       <StatusBar style="dark" />
-
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerEyebrow}>GB28181 APP</Text>
-          <Text style={styles.headerTitle}>移动端 WebView 容器</Text>
-        </View>
-        <Pressable
-          onPress={() => {
-            Linking.openURL(embedUrl).catch(() => undefined);
-          }}
-          style={styles.headerButton}
-        >
-          <Text style={styles.headerButtonText}>浏览器打开</Text>
-        </Pressable>
-      </View>
 
       <View style={styles.container}>
         <WebView
           allowsInlineMediaPlayback
+          bounces={false}
           cacheEnabled={false}
           domStorageEnabled
+          hideKeyboardAccessoryView
           javaScriptEnabled
           mediaPlaybackRequiresUserAction={false}
           onError={(event) => {
@@ -161,14 +138,6 @@ export function GbWebViewScreen() {
               >
                 <Text style={styles.primaryActionText}>重新加载</Text>
               </Pressable>
-              <Pressable
-                onPress={() => {
-                  Linking.openURL(embedUrl).catch(() => undefined);
-                }}
-                style={styles.secondaryAction}
-              >
-                <Text style={styles.secondaryActionText}>浏览器打开</Text>
-              </Pressable>
             </View>
           </View>
         ) : null}
@@ -180,44 +149,11 @@ export function GbWebViewScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#CBD5E1",
     backgroundColor: "#FFFFFF",
-  },
-  headerEyebrow: {
-    fontSize: 11,
-    color: "#64748B",
-    textTransform: "uppercase",
-    letterSpacing: 1.6,
-  },
-  headerTitle: {
-    marginTop: 4,
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#0F172A",
-  },
-  headerButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#E2E8F0",
-  },
-  headerButtonText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#0F172A",
   },
   container: {
     flex: 1,
-    backgroundColor: "#E2E8F0",
+    backgroundColor: "#FFFFFF",
   },
   webview: {
     flex: 1,
@@ -270,7 +206,6 @@ const styles = StyleSheet.create({
   errorActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
     marginTop: 8,
   },
   primaryAction: {
@@ -283,16 +218,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     color: "#FFFFFF",
-  },
-  secondaryAction: {
-    borderRadius: 999,
-    backgroundColor: "#E2E8F0",
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-  },
-  secondaryActionText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#0F172A",
   },
 });
