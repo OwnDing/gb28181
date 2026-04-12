@@ -1,21 +1,23 @@
 # GB28181 Video Surveillance Platform / GB28181 视频监控平台
 
-A modern, high-performance video surveillance management platform based on the GB/T 28181-2016 standard. Supports device auto-registration, real-time preview (H.264/H.265), cloud storage management, and AI-powered object detection.
+A modern, high-performance video surveillance management platform based on the GB/T 28181-2016 standard. Supports device auto-registration, real-time preview (H.264/H.265), cloud storage management, AI-powered object detection, and a cross-platform mobile app built with Expo.
 
-基于 GB/T 28181-2016 标准构建的现代化高性能视频监控管理平台。支持设备自动注册、由 ZLMediaKit 驱动的实时预览（H.264/H.265）、云端存储管理以及基于 AI 的目标检测。
+基于 GB/T 28181-2016 标准构建的现代化高性能视频监控管理平台。支持设备自动注册、由 ZLMediaKit 驱动的实时预览（H.264/H.265）、云端存储管理、基于 AI 的目标检测，以及基于 Expo 构建的跨端移动 App。
 
 ## 🏗 System Architecture / 系统架构
 
-The system consists of four core components:
-系统主要由以下四个核心组件构成：
+The system consists of five core components:
+系统主要由以下五个核心组件构成：
 
 1.  **Backend (Java/Spring Boot)**: Handles GB28181 SIP signaling, device management, user authentication, and business logic.
     -   **后端 (Java/Spring Boot)**：处理 GB28181 SIP 信令、设备管理、用户认证及业务逻辑。
-2.  **Frontend (React/Vite)**: A modern web interface for device management and video playback.
-    -   **前端 (React/Vite)**：现代化的 Web 界面，用于设备管理和视频播放。
-3.  **Media Server (ZLMediaKit)**: High-performance streaming server supporting RTSP/RTMP/HTTP-FLV/HLS/WebRTC.
+2.  **Frontend (React/Vite)**: Provides both the desktop management console and the mobile H5 pages under `/m/*`.
+    -   **前端 (React/Vite)**：同时提供桌面端管理台与 `/m/*` 移动端 H5 页面。
+3.  **Mobile App (Expo / React Native WebView)**: A cross-platform native shell for iOS and Android, loading the mobile H5 pages and extending them with native capabilities.
+    -   **移动 App (Expo / React Native WebView)**：面向 iOS 和 Android 的跨端原生壳层，通过 WebView 承载移动端 H5，并补充原生能力。
+4.  **Media Server (ZLMediaKit)**: High-performance streaming server supporting RTSP/RTMP/HTTP-FLV/HLS/WebRTC.
     -   **流媒体服务器 (ZLMediaKit)**：高性能流媒体服务，支持 RTSP/RTMP/HTTP-FLV/HLS/WebRTC 等多种协议。
-4.  **AI Service (Python/YOLOv8)**: Real-time object detection (e.g., person detection) on video streams.
+5.  **AI Service (Python/YOLOv8)**: Real-time object detection (e.g., person detection) on video streams.
     -   **AI 服务 (Python/YOLOv8)**：基于 YOLOv8 的实时视频流目标检测（如人形检测）。
 
 ```mermaid
@@ -24,6 +26,8 @@ graph TD
     Camera -->|RTP/UDP/TCP| ZLM("ZLMediaKit")
     
     User["Web Browser"] <-->|HTTP/WebSocket| Frontend("React Frontend")
+    MobileUser["Mobile User"] <-->|iOS / Android| ExpoApp("Expo App")
+    ExpoApp <-->|WebView / Bridge| Frontend
     Frontend <-->|API| Backend
     Frontend <-->|WebRTC/FLV/HLS| ZLM
     
@@ -61,6 +65,18 @@ graph TD
 
 ### 7. Smart Alarm / 智能报警
 ![Smart Alarm](pic/6-智能报警.png)
+
+### 8. App Home / App 首页
+![App Home](pic/app-首页.png)
+
+### 9. App Devices / App 设备
+![App Devices](pic/app-设备.png)
+
+### 10. App Live Preview / App 实时预览
+![App Live Preview](pic/app-实时预览.png)
+
+### 11. App More / App 更多
+![App More](pic/app-更多.png)
 
 ## ✨ Features / 系统功能
 
@@ -102,6 +118,16 @@ graph TD
 -   **Customizable**: Supports custom PTZ presets and patrol routes.
     -   **可定制**：支持自定义云台预置位和巡航路径。
 
+### 6. Mobile App / 移动端 App
+-   **Cross-Platform App Shell**: Built with Expo and `react-native-webview`, supporting iOS and Android with a unified codebase.
+    -   **跨端 App 壳层**：基于 Expo 与 `react-native-webview` 构建，使用统一代码同时支持 iOS 和 Android。
+-   **Mobile H5 Business Pages**: Covers login, home dashboard, device management, live preview, alarms, playback, storage, and GB28181 tools.
+    -   **移动端 H5 业务页**：覆盖登录、首页工作台、设备管理、实时预览、报警中心、录像回放、存储设置与 GB28181 工具。
+-   **Native-H5 Bridge**: Supports native title sync, back navigation, server address configuration, and pull-to-refresh.
+    -   **原生与 H5 桥接**：支持标题同步、返回控制、服务器地址配置与下拉刷新。
+-   **Native Enhancements**: Supports file download, system share, message center, local notification testing, and push token registration.
+    -   **原生增强能力**：支持文件下载、系统分享、消息中心、本地通知测试与 Push Token 注册。
+
 ## 🚀 Getting Started / 快速开始
 
 ### Prerequisites / 前置要求
@@ -136,6 +162,59 @@ graph TD
     -   **Web UI**: http://localhost:5173 (or configured port)
     -   **API Doc**: http://localhost:8080/swagger-ui.html
     -   **Default Account**: `admin` / `admin123`
+
+## 📱 Mobile App / 移动端 App
+
+The mobile app lives under the `app/` directory and uses Expo as the native shell. It loads the mobile H5 routes from the frontend such as `/m/login`, `/m/home`, `/m/devices`, `/m/preview`, `/m/alarms`, `/m/playback`, `/m/settings`, and `/m/gb28181`.
+
+移动端 App 位于 `app/` 目录，使用 Expo 作为原生壳层，承载前端中的移动端 H5 路由，例如 `/m/login`、`/m/home`、`/m/devices`、`/m/preview`、`/m/alarms`、`/m/playback`、`/m/settings` 和 `/m/gb28181`。
+
+### 1. App Features / App 功能
+
+-   Same account system and backend APIs as the Web platform.
+    -   与 Web 平台共用同一套账号体系与后端接口。
+-   Native shell capabilities including title bar, back control, server address settings, and pull-to-refresh.
+    -   提供标题栏、返回控制、服务器地址设置和下拉刷新等原生壳层能力。
+-   Native file download and system share for snapshots and recordings.
+    -   支持快照与录像文件的原生下载和系统分享。
+-   Built-in message center with local notification testing and push token registration flow.
+    -   内置消息中心，支持本地通知测试与 Push Token 注册流程。
+
+### 2. Start the App / 启动 App
+
+1.  **Start the frontend mobile H5 / 启动前端移动端页面**
+    ```bash
+    cd frontend
+    npm run dev
+    ```
+
+2.  **Start the backend / 启动后端**
+    ```bash
+    export JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-25.jdk/Contents/Home
+    export PATH="$JAVA_HOME/bin:$PATH"
+    sh mvnw spring-boot:run
+    ```
+
+3.  **Start the Expo app / 启动 Expo App**
+    ```bash
+    cd app
+    EXPO_PUBLIC_GB28181_EMBED_URL=http://192.168.6.230:5173 npx expo start -c
+    ```
+
+4.  **Run on device / 在设备上运行**
+    -   Use `npx expo start --ios` or `npx expo start --android` to open the simulator.
+    -   使用 `npx expo start --ios` 或 `npx expo start --android` 打开模拟器。
+    -   Make sure the frontend dev server address is reachable from your phone or simulator.
+    -   请确保前端开发地址可以被手机或模拟器访问。
+
+### 3. App Notes / App 使用说明
+
+-   The app opens the mobile H5 frontend address, not the backend API address directly.
+    -   App 打开的是移动端 H5 前端地址，而不是后端 API 地址本身。
+-   If the server address changes, it can be updated from the app's native settings page.
+    -   如果服务地址变更，可以直接在 App 的原生配置页中修改。
+-   For remote push delivery, a real device is recommended for end-to-end verification.
+    -   如需验证远程 Push 完整链路，建议使用真机进行端到端测试。
 
 ## 🪟 Windows Packaging & Run / Windows 打包与运行
 
@@ -260,6 +339,7 @@ You can configure the service by setting environment variables before running:
 
 -   **Backend**: Java 25, Spring Boot 4.x, Maven
 -   **Frontend**: React 18, Vite, TypeScript, TailwindCSS, Shadcn/UI
+-   **Mobile App**: Expo SDK 55, React Native, Expo Router, React Native WebView
 -   **Streaming**: ZLMediaKit (C++)
 -   **AI**: Python 3.9+, PyTorch, Ultralytics YOLO
 -   **Database**: SQLite (Easy deployment)
