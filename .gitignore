@@ -37,6 +37,7 @@ build/
 ./frontend/dist/
 
 node_modules
+.expo
 dist
 dist-ssr
 *.local

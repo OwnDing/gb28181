@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "gb28181-app",
+    "slug": "gb28181-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "gb28181app",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.ownding.gb28181app"
+    },
+    "android": {
+      "package": "com.ownding.gb28181app",
+      "predictiveBackGestureEnabled": false
+    },
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
