@@ -438,7 +438,6 @@ export default function MobilePreview() {
   return (
     <MobilePage
       title="实时预览"
-      description="移动端首版以单路预览为主，优先保证稳定性与手持操作体验。"
       action={
         <Button disabled={loading} onClick={loadDevices} size="sm" variant="outline">
           <RefreshCw className="mr-2 h-4 w-4" />

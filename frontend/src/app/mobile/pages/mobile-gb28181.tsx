@@ -297,7 +297,6 @@ export default function MobileGb28181() {
   return (
     <MobilePage
       title="GB28181 工具"
-      description="在手机上完成 DeviceInfo、Catalog、RecordInfo、订阅和 PTZ 的常用操作。"
       action={
         <Button
           disabled={loading || running || !selectedDeviceId}

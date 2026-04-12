@@ -275,7 +275,6 @@ export default function MobilePlayback() {
   return (
     <MobilePage
       title="录像回放"
-      description="支持按通道和日期查询录像片段，并在移动端连续播放相邻片段。"
       action={
         <Button
           disabled={loading || loadingRecords}

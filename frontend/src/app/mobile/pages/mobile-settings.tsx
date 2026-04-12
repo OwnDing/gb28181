@@ -38,7 +38,6 @@ export default function MobileSettings() {
   return (
     <MobilePage
       title="存储设置"
-      description="首版移动端先提供只读信息，策略编辑后续再细化到手机体验。"
       action={
         <Button disabled={loading} onClick={loadData} size="sm" variant="outline">
           <RefreshCw className="mr-2 h-4 w-4" />

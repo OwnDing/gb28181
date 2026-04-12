@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { useLocation } from "react-router";
-import { useNativeShellState } from "../lib/native-shell";
+import {
+  isRunningInNativeShell,
+  useNativeShellState,
+} from "../lib/native-shell";
 
 type MobilePageProps = {
   title: string;
@@ -17,6 +20,7 @@ export default function MobilePage({
   children,
 }: MobilePageProps) {
   const location = useLocation();
+  const inNativeShell = isRunningInNativeShell(location.search);
   const canGoBack =
     location.pathname !== "/m" &&
     location.pathname !== "/m/home";
@@ -33,15 +37,25 @@ export default function MobilePage({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold text-slate-900">{title}</h1>
-          {description ? (
-            <p className="mt-1 text-sm text-slate-500">{description}</p>
+      {!inNativeShell || action ? (
+        <div
+          className={`flex gap-3 ${
+            inNativeShell
+              ? "justify-end"
+              : "items-start justify-between"
+          }`}
+        >
+          {!inNativeShell ? (
+            <div className="min-w-0">
+              <h1 className="text-xl font-semibold text-slate-900">{title}</h1>
+              {description ? (
+                <p className="mt-1 text-sm text-slate-500">{description}</p>
+              ) : null}
+            </div>
           ) : null}
+          {action ? <div className="shrink-0">{action}</div> : null}
         </div>
-        {action ? <div className="shrink-0">{action}</div> : null}
-      </div>
+      ) : null}
 
       {children}
     </div>

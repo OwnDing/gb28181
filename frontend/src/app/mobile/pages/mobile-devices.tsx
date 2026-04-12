@@ -236,7 +236,6 @@ export default function MobileDevices() {
     <>
       <MobilePage
         title="设备管理"
-        description="支持新增、编辑、启停和删除设备，方便在手机上快速维护接入点。"
         action={
           <div className="flex items-center gap-2">
             <Button

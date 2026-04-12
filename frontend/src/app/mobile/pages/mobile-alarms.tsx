@@ -56,7 +56,6 @@ export default function MobileAlarms() {
   return (
     <MobilePage
       title="报警中心"
-      description="默认展示最近 50 条报警，支持查看快照与定时刷新。"
       action={
         <Button disabled={loading} onClick={loadAlarms} size="sm" variant="outline">
           <RefreshCw className="mr-2 h-4 w-4" />

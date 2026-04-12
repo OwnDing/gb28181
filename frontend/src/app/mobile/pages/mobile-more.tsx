@@ -23,19 +23,19 @@ import {
 const menuItems = [
   {
     title: "录像回放",
-    description: "进入移动端回放规划页，后续补齐时间轴与播放器体验。",
+    description: "按通道和日期查询录像并直接播放。",
     to: "/m/playback",
     icon: History,
   },
   {
     title: "存储设置",
-    description: "查看当前容量策略与存储占用，首版先提供只读视图。",
+    description: "查看容量、策略和当前使用情况。",
     to: "/m/settings",
     icon: Database,
   },
   {
     title: "GB28181 工具",
-    description: "查看国标能力规划与下一阶段高级操作入口。",
+    description: "执行查询、订阅、回放和云台控制。",
     to: "/m/gb28181",
     icon: Radio,
   },
@@ -63,10 +63,7 @@ export default function MobileMore() {
   };
 
   return (
-    <MobilePage
-      title="更多"
-      description="这里收纳低频管理功能，保持首页和底部导航的高频操作足够简洁。"
-    >
+    <MobilePage title="更多">
       <Card className="border-slate-200 shadow-sm">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">当前登录</CardTitle>

@@ -146,7 +146,6 @@ export default function MobileHome() {
   return (
     <MobilePage
       title="移动工作台"
-      description="首页聚合设备、报警和存储信息，方便快速巡检。"
       action={
         <Button disabled={loading} onClick={loadData} size="sm" variant="outline">
           <RefreshCw className="mr-2 h-4 w-4" />
