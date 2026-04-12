@@ -1,4 +1,7 @@
 import type { ReactNode } from "react";
+import { useEffect } from "react";
+import { useLocation } from "react-router";
+import { useNativeShellState } from "../lib/native-shell";
 
 type MobilePageProps = {
   title: string;
@@ -13,6 +16,21 @@ export default function MobilePage({
   action,
   children,
 }: MobilePageProps) {
+  const location = useLocation();
+  const canGoBack =
+    location.pathname !== "/m" &&
+    location.pathname !== "/m/home";
+
+  useEffect(() => {
+    document.title = `${title} - GB28181 App`;
+  }, [title]);
+
+  useNativeShellState({
+    title,
+    canGoBack,
+    path: `${location.pathname}${location.search}`,
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">

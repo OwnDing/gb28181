@@ -159,7 +159,9 @@
   [data-slot="drawer-content"],
   [data-slot="drawer-content"] *,
   [data-slot="sheet-content"],
-  [data-slot="sheet-content"] * {
+  [data-slot="sheet-content"] *,
+  [data-slot="alert-dialog-content"],
+  [data-slot="alert-dialog-content"] * {
     font-family: var(--app-font-sans);
   }
 

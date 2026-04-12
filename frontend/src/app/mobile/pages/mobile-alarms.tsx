@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Image as ImageIcon, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  Download,
+  Image as ImageIcon,
+  RefreshCw,
+  Share2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -11,6 +17,10 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { alarmApi, type GbAlarmEvent } from "../../lib/api";
+import {
+  requestNativeFileDownload,
+  requestNativeFileShare,
+} from "../lib/native-actions";
 import MobilePage from "../components/mobile-page";
 
 function formatDateTime(value?: string | null) {
@@ -23,7 +33,7 @@ function formatDateTime(value?: string | null) {
 export default function MobileAlarms() {
   const [loading, setLoading] = useState(true);
   const [alarms, setAlarms] = useState<GbAlarmEvent[]>([]);
-  const [selectedSnapshot, setSelectedSnapshot] = useState<string | null>(null);
+  const [selectedAlarm, setSelectedAlarm] = useState<GbAlarmEvent | null>(null);
 
   const loadAlarms = useCallback(async () => {
     try {
@@ -96,7 +106,7 @@ export default function MobileAlarms() {
                   <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
                     <button
                       className="block w-full text-left"
-                      onClick={() => setSelectedSnapshot(alarm.snapshotUrl || null)}
+                      onClick={() => setSelectedAlarm(alarm)}
                       type="button"
                     >
                       <img
@@ -108,7 +118,7 @@ export default function MobileAlarms() {
                     <div className="flex items-center justify-between px-4 py-3">
                       <span className="text-sm text-slate-500">点击查看大图</span>
                       <Button
-                        onClick={() => setSelectedSnapshot(alarm.snapshotUrl || null)}
+                        onClick={() => setSelectedAlarm(alarm)}
                         size="sm"
                         variant="outline"
                       >
@@ -127,21 +137,71 @@ export default function MobileAlarms() {
       <Dialog
         onOpenChange={(open) => {
           if (!open) {
-            setSelectedSnapshot(null);
+            setSelectedAlarm(null);
           }
         }}
-        open={!!selectedSnapshot}
+        open={!!selectedAlarm}
       >
         <DialogContent className="max-w-[calc(100%-1.5rem)] rounded-2xl p-4 sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>报警快照</DialogTitle>
           </DialogHeader>
-          {selectedSnapshot ? (
-            <img
-              alt="报警快照"
-              className="max-h-[70vh] w-full rounded-xl object-contain"
-              src={selectedSnapshot}
-            />
+          {selectedAlarm?.snapshotUrl ? (
+            <div className="space-y-4">
+              <img
+                alt="报警快照"
+                className="max-h-[70vh] w-full rounded-xl object-contain"
+                src={selectedAlarm.snapshotUrl}
+              />
+
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  onClick={async () => {
+                    try {
+                      const mode = await requestNativeFileShare({
+                        url: selectedAlarm.snapshotUrl || "",
+                        fileName: `alarm-${selectedAlarm.id}.jpg`,
+                        mimeType: "image/jpeg",
+                        title: selectedAlarm.description || "报警快照",
+                      });
+                      toast.success(
+                        mode === "native" ? "已交给 App 分享" : "已准备快照文件",
+                      );
+                    } catch (error) {
+                      toast.error(
+                        error instanceof Error ? error.message : "快照分享失败",
+                      );
+                    }
+                  }}
+                  variant="outline"
+                >
+                  <Share2 className="mr-2 h-4 w-4" />
+                  分享快照
+                </Button>
+                <Button
+                  onClick={async () => {
+                    try {
+                      const mode = await requestNativeFileDownload({
+                        url: selectedAlarm.snapshotUrl || "",
+                        fileName: `alarm-${selectedAlarm.id}.jpg`,
+                        mimeType: "image/jpeg",
+                      });
+                      toast.success(
+                        mode === "native" ? "已交给 App 下载" : "下载已开始",
+                      );
+                    } catch (error) {
+                      toast.error(
+                        error instanceof Error ? error.message : "快照下载失败",
+                      );
+                    }
+                  }}
+                  variant="outline"
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  下载快照
+                </Button>
+              </div>
+            </div>
           ) : null}
         </DialogContent>
       </Dialog>

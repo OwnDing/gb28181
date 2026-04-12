@@ -7,7 +7,8 @@
     "scheme": "gb28181app",
     "userInterfaceStyle": "light",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-sharing"
     ],
     "ios": {
       "bundleIdentifier": "com.ownding.gb28181app"

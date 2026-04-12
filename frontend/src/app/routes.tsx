@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from "react-router";
+import { createBrowserRouter, Navigate, useLocation } from "react-router";
 import Login from "./pages/login";
 import Layout from "./pages/layout";
 import DeviceManagement from "./pages/device-management";
@@ -17,9 +17,16 @@ import MobileMore from "./mobile/pages/mobile-more";
 import MobilePlayback from "./mobile/pages/mobile-playback";
 import MobileSettings from "./mobile/pages/mobile-settings";
 import MobileGb28181 from "./mobile/pages/mobile-gb28181";
+import { appendShellSearch } from "./mobile/lib/native-shell";
 
 function MobileIndexRedirect() {
-  return <Navigate to="/m/home" replace />;
+  const location = useLocation();
+  return (
+    <Navigate
+      replace
+      to={appendShellSearch("/m/home", location.search)}
+    />
+  );
 }
 
 export const router = createBrowserRouter([

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { ShieldCheck, Video } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/button";
@@ -8,18 +8,30 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { authApi } from "../../lib/api";
 import { getToken, setToken } from "../../lib/http";
+import {
+  appendShellSearch,
+  useNativeShellState,
+} from "../lib/native-shell";
 
 export default function MobileLogin() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  useNativeShellState({
+    title: "移动端登录",
+    canGoBack: false,
+    path: `${location.pathname}${location.search}`,
+  });
+
   useEffect(() => {
+    document.title = "移动端登录 - GB28181 App";
     if (getToken()) {
-      navigate("/m/home", { replace: true });
+      navigate(appendShellSearch("/m/home", location.search), { replace: true });
     }
-  }, [navigate]);
+  }, [location.search, navigate]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -35,7 +47,7 @@ export default function MobileLogin() {
       localStorage.setItem("username", result.username);
       localStorage.setItem("role", result.role);
       toast.success("登录成功");
-      navigate("/m/home", { replace: true });
+      navigate(appendShellSearch("/m/home", location.search), { replace: true });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "登录失败");
     } finally {

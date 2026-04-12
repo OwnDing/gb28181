@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { AlertTriangle, Home, Monitor, UserRound, Video } from "lucide-react";
 import { authApi } from "../../lib/api";
 import { clearToken, getToken } from "../../lib/http";
+import { appendShellSearch, isRunningInNativeShell } from "../lib/native-shell";
 
 type NavItem = {
   label: string;
@@ -51,6 +52,7 @@ const navItems: NavItem[] = [
 export default function MobileShell() {
   const navigate = useNavigate();
   const location = useLocation();
+  const nativeShell = isRunningInNativeShell(location.search);
   const [checking, setChecking] = useState(true);
   const [username, setUsername] = useState(
     localStorage.getItem("username") || "用户",
@@ -62,7 +64,9 @@ export default function MobileShell() {
     const bootstrap = async () => {
       const token = getToken();
       if (!token) {
-        navigate("/m/login", { replace: true });
+        navigate(appendShellSearch("/m/login", location.search), {
+          replace: true,
+        });
         return;
       }
 
@@ -77,7 +81,9 @@ export default function MobileShell() {
         clearToken();
         localStorage.removeItem("username");
         localStorage.removeItem("role");
-        navigate("/m/login", { replace: true });
+        navigate(appendShellSearch("/m/login", location.search), {
+          replace: true,
+        });
         return;
       } finally {
         if (mounted) {
@@ -90,7 +96,7 @@ export default function MobileShell() {
     return () => {
       mounted = false;
     };
-  }, [navigate]);
+  }, [location.search, navigate]);
 
   const userInitial = useMemo(
     () => username.trim().slice(0, 1).toUpperCase() || "U",
@@ -110,29 +116,31 @@ export default function MobileShell() {
   return (
     <div className="min-h-screen bg-slate-100">
       <div className="mx-auto flex min-h-screen max-w-screen-md flex-col bg-white shadow-sm">
-        <header
-          className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur"
-          style={{ paddingTop: "max(env(safe-area-inset-top), 0px)" }}
-        >
-          <div className="flex items-center justify-between px-4 py-3">
-            <div className="min-w-0">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                GB28181 APP
-              </p>
-              <p className="truncate text-sm font-medium text-slate-900">
-                视频巡检与管理
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="hidden text-xs text-slate-500 sm:inline">
-                {username}
-              </span>
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-                {userInitial}
+        {nativeShell ? null : (
+          <header
+            className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur"
+            style={{ paddingTop: "max(env(safe-area-inset-top), 0px)" }}
+          >
+            <div className="flex items-center justify-between px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                  GB28181 APP
+                </p>
+                <p className="truncate text-sm font-medium text-slate-900">
+                  视频巡检与管理
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="hidden text-xs text-slate-500 sm:inline">
+                  {username}
+                </span>
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                  {userInitial}
+                </div>
               </div>
             </div>
-          </div>
-        </header>
+          </header>
+        )}
 
         <main
           className="flex-1 px-4 py-4"
@@ -152,7 +160,7 @@ export default function MobileShell() {
             return (
               <Link
                 key={item.to}
-                to={item.to}
+                to={appendShellSearch(item.to, location.search)}
                 className={`flex flex-col items-center justify-center gap-1 px-2 py-3 text-xs transition-colors ${
                   active
                     ? "text-primary"

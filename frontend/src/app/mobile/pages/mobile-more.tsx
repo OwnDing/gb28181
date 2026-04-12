@@ -1,11 +1,20 @@
-import { Link, useNavigate } from "react-router";
-import { Database, History, LogOut, Radio, ShieldCheck } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router";
+import {
+  Bell,
+  Database,
+  History,
+  LogOut,
+  Radio,
+  ShieldCheck,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { authApi } from "../../lib/api";
 import { clearToken } from "../../lib/http";
 import MobilePage from "../components/mobile-page";
+import { openNativePushCenter } from "../lib/native-actions";
+import { appendShellSearch, isRunningInNativeShell } from "../lib/native-shell";
 
 const menuItems = [
   {
@@ -30,6 +39,8 @@ const menuItems = [
 
 export default function MobileMore() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const inNativeShell = isRunningInNativeShell(location.search);
   const username = localStorage.getItem("username") || "用户";
   const role = localStorage.getItem("role") || "ADMIN";
 
@@ -43,7 +54,7 @@ export default function MobileMore() {
     localStorage.removeItem("username");
     localStorage.removeItem("role");
     toast.success("已退出登录");
-    navigate("/m/login", { replace: true });
+    navigate(appendShellSearch("/m/login", location.search), { replace: true });
   };
 
   return (
@@ -68,6 +79,19 @@ export default function MobileMore() {
         </CardContent>
       </Card>
 
+      {inNativeShell ? (
+        <Button
+          className="w-full"
+          onClick={() => {
+            openNativePushCenter();
+          }}
+          variant="outline"
+        >
+          <Bell className="mr-2 h-4 w-4" />
+          打开原生消息中心
+        </Button>
+      ) : null}
+
       <Card className="border-slate-200 shadow-sm">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">功能入口</CardTitle>
@@ -77,7 +101,7 @@ export default function MobileMore() {
             <Link
               key={item.to}
               className="flex items-center gap-3 rounded-2xl border border-slate-200 px-4 py-4 transition-colors hover:border-primary/40 hover:bg-primary/5"
-              to={item.to}
+              to={appendShellSearch(item.to, location.search)}
             >
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
                 <item.icon className="h-5 w-5" />

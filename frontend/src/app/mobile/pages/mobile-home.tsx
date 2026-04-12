@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import {
   AlertTriangle,
   ChevronRight,
@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 import { Badge } from "../../components/ui/badge";
 import { alarmApi, deviceApi, storageApi, type GbAlarmEvent } from "../../lib/api";
 import MobilePage from "../components/mobile-page";
+import { appendShellSearch } from "../lib/native-shell";
 
 type DashboardState = {
   totalDevices: number;
@@ -41,6 +42,7 @@ function formatDateTime(value?: string | null) {
 }
 
 export default function MobileHome() {
+  const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [state, setState] = useState<DashboardState>(EMPTY_STATE);
 
@@ -180,7 +182,7 @@ export default function MobileHome() {
             <Link
               key={item.to}
               className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-4 transition-colors hover:border-primary/40 hover:bg-primary/5"
-              to={item.to}
+              to={appendShellSearch(item.to, location.search)}
             >
               <div>
                 <p className="font-medium text-slate-900">{item.title}</p>
@@ -206,7 +208,7 @@ export default function MobileHome() {
               <Link
                 key={alarm.id}
                 className="flex items-start gap-3 rounded-2xl border border-slate-200 px-4 py-4 transition-colors hover:border-primary/40 hover:bg-primary/5"
-                to="/m/alarms"
+                to={appendShellSearch("/m/alarms", location.search)}
               >
                 <div className="mt-1 flex h-10 w-10 items-center justify-center rounded-full bg-red-50 text-red-500">
                   <AlertTriangle className="h-5 w-5" />
