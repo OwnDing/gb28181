@@ -48,3 +48,4 @@ dist-ssr
 *.log
 
 /data/
+.DS_Store
