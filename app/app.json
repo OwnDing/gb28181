@@ -8,7 +8,8 @@
     "userInterfaceStyle": "light",
     "plugins": [
       "expo-router",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-notifications"
     ],
     "ios": {
       "bundleIdentifier": "com.ownding.gb28181app"

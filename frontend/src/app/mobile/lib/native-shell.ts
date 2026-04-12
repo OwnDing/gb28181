@@ -6,12 +6,25 @@ export type NativeShellState = {
   path?: string;
 };
 
-type NativeShellMessage = {
-  type: "shell-state";
-  title: string;
-  canGoBack: boolean;
-  path: string;
+export type NativeAuthState = {
+  token: string | null;
+  username?: string | null;
+  role?: string | null;
 };
+
+type NativeShellMessage =
+  | {
+      type: "shell-state";
+      title: string;
+      canGoBack: boolean;
+      path: string;
+    }
+  | {
+      type: "auth-state";
+      token: string | null;
+      username: string | null;
+      role: string | null;
+    };
 
 declare global {
   interface Window {
@@ -91,6 +104,25 @@ export function syncNativeShellState({
     title,
     canGoBack,
     path: path || `${window.location.pathname}${window.location.search}`,
+  };
+
+  window.ReactNativeWebView?.postMessage(JSON.stringify(message));
+}
+
+export function syncNativeAuthState({
+  token,
+  username,
+  role,
+}: NativeAuthState) {
+  if (!isRunningInNativeShell() || typeof window === "undefined") {
+    return;
+  }
+
+  const message: NativeShellMessage = {
+    type: "auth-state",
+    token,
+    username: username ?? null,
+    role: role ?? null,
   };
 
   window.ReactNativeWebView?.postMessage(JSON.stringify(message));

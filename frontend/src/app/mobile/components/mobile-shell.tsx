@@ -3,7 +3,11 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { AlertTriangle, Home, Monitor, UserRound, Video } from "lucide-react";
 import { authApi } from "../../lib/api";
 import { clearToken, getToken } from "../../lib/http";
-import { appendShellSearch, isRunningInNativeShell } from "../lib/native-shell";
+import {
+  appendShellSearch,
+  isRunningInNativeShell,
+  syncNativeAuthState,
+} from "../lib/native-shell";
 
 type NavItem = {
   label: string;
@@ -64,6 +68,7 @@ export default function MobileShell() {
     const bootstrap = async () => {
       const token = getToken();
       if (!token) {
+        syncNativeAuthState({ token: null, username: null, role: null });
         navigate(appendShellSearch("/m/login", location.search), {
           replace: true,
         });
@@ -77,10 +82,16 @@ export default function MobileShell() {
         }
         setUsername(me.username);
         localStorage.setItem("username", me.username);
+        syncNativeAuthState({
+          token,
+          username: me.username,
+          role: me.role,
+        });
       } catch {
         clearToken();
         localStorage.removeItem("username");
         localStorage.removeItem("role");
+        syncNativeAuthState({ token: null, username: null, role: null });
         navigate(appendShellSearch("/m/login", location.search), {
           replace: true,
         });

@@ -14,7 +14,11 @@ import { authApi } from "../../lib/api";
 import { clearToken } from "../../lib/http";
 import MobilePage from "../components/mobile-page";
 import { openNativePushCenter } from "../lib/native-actions";
-import { appendShellSearch, isRunningInNativeShell } from "../lib/native-shell";
+import {
+  appendShellSearch,
+  isRunningInNativeShell,
+  syncNativeAuthState,
+} from "../lib/native-shell";
 
 const menuItems = [
   {
@@ -53,6 +57,7 @@ export default function MobileMore() {
     clearToken();
     localStorage.removeItem("username");
     localStorage.removeItem("role");
+    syncNativeAuthState({ token: null, username: null, role: null });
     toast.success("已退出登录");
     navigate(appendShellSearch("/m/login", location.search), { replace: true });
   };

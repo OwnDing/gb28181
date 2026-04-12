@@ -164,6 +164,23 @@ CREATE TABLE IF NOT EXISTS gb_playback_session (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mobile_push_token (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    token_type TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    device_name TEXT,
+    app_version TEXT,
+    permission_status TEXT,
+    project_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES user_account(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_auth_token_token ON auth_token(token);
 CREATE INDEX IF NOT EXISTS idx_auth_token_expires ON auth_token(expires_at);
 CREATE INDEX IF NOT EXISTS idx_gb_device_device_id ON gb_device(device_id);
@@ -174,3 +191,5 @@ CREATE INDEX IF NOT EXISTS idx_gb_alarm_event_device ON gb_alarm_event(device_id
 CREATE INDEX IF NOT EXISTS idx_gb_mobile_position_device ON gb_mobile_position(device_id);
 CREATE INDEX IF NOT EXISTS idx_gb_subscription_device ON gb_subscription(device_id);
 CREATE INDEX IF NOT EXISTS idx_gb_playback_session_device ON gb_playback_session(device_id);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_token_user ON mobile_push_token(user_id);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_token_updated_at ON mobile_push_token(updated_at);

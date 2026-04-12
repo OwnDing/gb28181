@@ -2,8 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Compass,
   MapPin,
+  Pause,
+  Play,
   RefreshCw,
   SatelliteDish,
+  SkipForward,
+  Square,
   Video,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -65,6 +69,8 @@ export default function MobileGb28181() {
   const [expires, setExpires] = useState("3600");
   const [ptzSpeed, setPtzSpeed] = useState([128]);
   const [presetNo, setPresetNo] = useState("1");
+  const [playbackSpeed, setPlaybackSpeed] = useState("2");
+  const [seekSeconds, setSeekSeconds] = useState("60");
 
   const [profile, setProfile] = useState<GbDeviceProfile | null>(null);
   const [catalog, setCatalog] = useState<GbCatalogItem[]>([]);
@@ -208,6 +214,62 @@ export default function MobileGb28181() {
         }),
       `云台 ${action} 指令已发送`,
     );
+  };
+
+  const handleStartPlayback = async () => {
+    if (!selectedDeviceId) {
+      toast.error("请先选择设备");
+      return;
+    }
+    if (!recordStartTime || !recordEndTime) {
+      toast.error("请先填写回放开始和结束时间");
+      return;
+    }
+
+    try {
+      setRunning(true);
+      const result = await gb28181Api.startPlayback(selectedDeviceId, {
+        channelId: channelId || undefined,
+        startTime: recordStartTime,
+        endTime: recordEndTime,
+      });
+      toast.success(`回放已开始: ${result.session.streamId}`);
+      await loadSnapshots(selectedDeviceId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "回放启动失败");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const handlePlaybackControl = async (
+    sessionId: string,
+    action: "PAUSE" | "RESUME" | "SPEED" | "SEEK",
+  ) => {
+    await runAction(
+      () =>
+        gb28181Api.controlPlayback(sessionId, {
+          action,
+          speed: action === "SPEED" ? Number(playbackSpeed) : undefined,
+          seekSeconds: action === "SEEK" ? Number(seekSeconds) : undefined,
+        }),
+      `回放 ${action} 指令已发送`,
+    );
+  };
+
+  const handleStopPlayback = async (sessionId: string) => {
+    try {
+      setRunning(true);
+      await gb28181Api.stopPlayback(sessionId);
+      toast.success("回放已停止");
+      if (selectedDeviceId) {
+        await loadSnapshots(selectedDeviceId);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "回放停止失败");
+    } finally {
+      setRunning(false);
+    }
   };
 
   const selectedStats = useMemo(
@@ -598,6 +660,14 @@ export default function MobileGb28181() {
               >
                 发送录像查询
               </Button>
+              <Button
+                className="w-full"
+                disabled={!selectedDeviceId || running}
+                onClick={handleStartPlayback}
+                variant="outline"
+              >
+                开始设备回放
+              </Button>
             </CardContent>
           </Card>
 
@@ -625,6 +695,119 @@ export default function MobileGb28181() {
                     <p className="mt-2 text-sm text-slate-600">
                       {formatRecordRange(item)}
                     </p>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">回放会话控制</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="mobile-gb-playback-speed">倍速</Label>
+                  <Input
+                    id="mobile-gb-playback-speed"
+                    inputMode="decimal"
+                    onChange={(event) => setPlaybackSpeed(event.target.value)}
+                    value={playbackSpeed}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="mobile-gb-seek-seconds">快进秒数</Label>
+                  <Input
+                    id="mobile-gb-seek-seconds"
+                    inputMode="numeric"
+                    onChange={(event) => setSeekSeconds(event.target.value)}
+                    value={seekSeconds}
+                  />
+                </div>
+              </div>
+
+              {playbackSessions.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
+                  暂无回放会话
+                </div>
+              ) : (
+                playbackSessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className="rounded-2xl border border-slate-200 px-4 py-4"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-slate-900">
+                          {session.channelId}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {session.startTime} 至 {session.endTime}
+                        </p>
+                      </div>
+                      <Badge
+                        variant={
+                          session.status === "PLAYING"
+                            ? "default"
+                            : session.status === "CLOSED"
+                              ? "secondary"
+                              : "outline"
+                        }
+                      >
+                        {session.status}
+                      </Badge>
+                    </div>
+
+                    <p className="mt-2 text-sm text-slate-500">
+                      speed={session.speed} / stream={session.streamId}
+                    </p>
+
+                    {session.status !== "CLOSED" ? (
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <Button
+                          disabled={running}
+                          onClick={() => handlePlaybackControl(session.sessionId, "PAUSE")}
+                          variant="outline"
+                        >
+                          <Pause className="mr-2 h-4 w-4" />
+                          暂停
+                        </Button>
+                        <Button
+                          disabled={running}
+                          onClick={() => handlePlaybackControl(session.sessionId, "RESUME")}
+                          variant="outline"
+                        >
+                          <Play className="mr-2 h-4 w-4" />
+                          继续
+                        </Button>
+                        <Button
+                          disabled={running}
+                          onClick={() => handlePlaybackControl(session.sessionId, "SPEED")}
+                          variant="outline"
+                        >
+                          <Video className="mr-2 h-4 w-4" />
+                          倍速
+                        </Button>
+                        <Button
+                          disabled={running}
+                          onClick={() => handlePlaybackControl(session.sessionId, "SEEK")}
+                          variant="outline"
+                        >
+                          <SkipForward className="mr-2 h-4 w-4" />
+                          快进
+                        </Button>
+                        <Button
+                          className="col-span-2"
+                          disabled={running}
+                          onClick={() => handleStopPlayback(session.sessionId)}
+                          variant="outline"
+                        >
+                          <Square className="mr-2 h-4 w-4" />
+                          停止回放
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}

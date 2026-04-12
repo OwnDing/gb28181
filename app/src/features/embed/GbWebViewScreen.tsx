@@ -1,5 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
+import * as Device from "expo-device";
 import { File, Paths } from "expo-file-system";
+import * as Notifications from "expo-notifications";
 import * as Sharing from "expo-sharing";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -51,11 +54,19 @@ type NativePushCenterMessage = {
   type: "native-open-push-center";
 };
 
+type AuthStateMessage = {
+  type: "auth-state";
+  token: string | null;
+  username?: string | null;
+  role?: string | null;
+};
+
 type WebViewMessage =
   | ShellStateMessage
   | NativeDownloadMessage
   | NativeShareMessage
-  | NativePushCenterMessage;
+  | NativePushCenterMessage
+  | AuthStateMessage;
 
 type NativeEventItem = {
   id: string;
@@ -63,6 +74,37 @@ type NativeEventItem = {
   detail: string;
   createdAt: string;
 };
+
+type ApiResult<T> = {
+  code: number;
+  message: string;
+  data: T;
+};
+
+type RegisteredPushToken = {
+  id: number;
+  userId: number;
+  username: string;
+  token: string;
+  tokenType: string;
+  platform: string;
+  deviceName?: string | null;
+  appVersion?: string | null;
+  permissionStatus?: string | null;
+  projectId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenAt?: string | null;
+};
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
 
 function normalizeBaseUrl(rawValue: string) {
   const trimmed = rawValue.trim();
@@ -123,9 +165,58 @@ function sanitizeFileName(fileName?: string) {
   return safeName || `gb28181-${Date.now()}`;
 }
 
+function previewToken(token?: string | null) {
+  if (!token) {
+    return "未获取";
+  }
+  if (token.length <= 24) {
+    return token;
+  }
+  return `${token.slice(0, 12)}...${token.slice(-8)}`;
+}
+
+async function parseApiResponse<T>(response: Response): Promise<T> {
+  const rawText = await response.text();
+  let payload: ApiResult<T> | null = null;
+
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as ApiResult<T>;
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!response.ok || !payload || payload.code !== 0) {
+    throw new Error(payload?.message || rawText || `请求失败 (${response.status})`);
+  }
+
+  return payload.data;
+}
+
+function resolvePermissionStatus(permission: unknown) {
+  const record = permission as {
+    status?: string;
+    granted?: boolean;
+    canAskAgain?: boolean;
+  };
+
+  if (typeof record.status === "string") {
+    return record.status;
+  }
+  if (record.granted === true) {
+    return Notifications.PermissionStatus.GRANTED;
+  }
+  if (record.canAskAgain === false) {
+    return Notifications.PermissionStatus.DENIED;
+  }
+  return Notifications.PermissionStatus.UNDETERMINED;
+}
+
 export function GbWebViewScreen() {
   const webViewRef = useRef<WebView>(null);
   const flashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSyncedPushKeyRef = useRef<string | null>(null);
 
   const [configReady, setConfigReady] = useState(false);
   const [baseUrl, setBaseUrl] = useState(getDefaultBaseUrl());
@@ -141,11 +232,24 @@ export function GbWebViewScreen() {
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(Date.now());
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [authUsername, setAuthUsername] = useState<string | null>(null);
+  const [authRole, setAuthRole] = useState<string | null>(null);
+  const [pushPermissionStatus, setPushPermissionStatus] = useState("unknown");
+  const [expoPushToken, setExpoPushToken] = useState<string | null>(null);
+  const [devicePushToken, setDevicePushToken] = useState<string | null>(null);
+  const [pushSyncState, setPushSyncState] = useState("等待登录后注册 Push");
+  const [pushSyncError, setPushSyncError] = useState<string | null>(null);
+  const [registeringPush, setRegisteringPush] = useState(false);
+  const [loadingPushTokens, setLoadingPushTokens] = useState(false);
+  const [registeredPushTokens, setRegisteredPushTokens] = useState<
+    RegisteredPushToken[]
+  >([]);
   const [nativeEvents, setNativeEvents] = useState<NativeEventItem[]>([
     {
       id: "native-shell-ready",
       title: "原生消息中心已启用",
-      detail: "后续可在这里直接接入 Expo Push 和更多系统通知。",
+      detail: "已支持 Push 注册、本地测试通知、文件下载与分享回执。",
       createdAt: new Date().toISOString(),
     },
   ]);
@@ -190,6 +294,15 @@ export function GbWebViewScreen() {
   );
   const hostLabel = useMemo(() => safeHostLabel(baseUrl), [baseUrl]);
   const canGoBack = shellCanGoBack || browserCanGoBack;
+  const projectId = useMemo(() => {
+    const envProjectId = process.env.EXPO_PUBLIC_EXPO_PROJECT_ID?.trim();
+    const configProjectId = Constants.easConfig?.projectId;
+    const extraProjectId = (
+      Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined
+    )?.eas?.projectId;
+
+    return envProjectId || configProjectId || extraProjectId || null;
+  }, []);
 
   const openSettings = useCallback(() => {
     setDraftUrl(baseUrl);
@@ -248,6 +361,34 @@ export function GbWebViewScreen() {
 
     return () => subscription.remove();
   }, [goBack]);
+
+  useEffect(() => {
+    const receivedSubscription = Notifications.addNotificationReceivedListener(
+      (notification) => {
+        const title = notification.request.content.title || "收到系统通知";
+        const detail =
+          notification.request.content.body ||
+          `当前页面 ${shellPath} 收到一条通知`;
+        pushNativeEvent(title, detail);
+        showFlash(title);
+      },
+    );
+
+    const responseSubscription =
+      Notifications.addNotificationResponseReceivedListener((response) => {
+        const content = response.notification.request.content;
+        pushNativeEvent(
+          "已打开通知",
+          content.title || content.body || "用户从系统通知进入了 App。",
+        );
+        setPushCenterVisible(true);
+      });
+
+    return () => {
+      receivedSubscription.remove();
+      responseSubscription.remove();
+    };
+  }, [pushNativeEvent, shellPath, showFlash]);
 
   const saveAddress = useCallback(async () => {
     const normalized = normalizeBaseUrl(draftUrl);
@@ -354,6 +495,263 @@ export function GbWebViewScreen() {
     [downloadRemoteFile, pushNativeEvent, showFlash],
   );
 
+  const loadRegisteredTokens = useCallback(async () => {
+    if (!authToken) {
+      setRegisteredPushTokens([]);
+      return;
+    }
+
+    try {
+      setLoadingPushTokens(true);
+      const response = await fetch(
+        `${normalizeBaseUrl(baseUrl)}/api/app/push-tokens`,
+        {
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${authToken}`,
+          },
+        },
+      );
+      const data = await parseApiResponse<RegisteredPushToken[]>(response);
+      setRegisteredPushTokens(data);
+
+      if (data.length === 0 && !expoPushToken && !devicePushToken) {
+        setPushSyncState("已登录，尚未注册 Push token");
+      }
+    } catch (loadError) {
+      const text =
+        loadError instanceof Error ? loadError.message : "读取 Push token 失败";
+      setPushSyncError(text);
+    } finally {
+      setLoadingPushTokens(false);
+    }
+  }, [authToken, baseUrl, devicePushToken, expoPushToken]);
+
+  const syncPushTokenToServer = useCallback(
+    async (token: string, tokenType: "EXPO" | "DEVICE") => {
+      if (!authToken) {
+        setPushSyncState("Push token 已获取，等待 H5 登录态同步");
+        return;
+      }
+
+      try {
+        setPushSyncError(null);
+        setPushSyncState("正在同步 Push token 到服务端...");
+        const response = await fetch(
+          `${normalizeBaseUrl(baseUrl)}/api/app/push-tokens`,
+          {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({
+              token,
+              tokenType,
+              platform: Platform.OS,
+              deviceName: Device.deviceName || Device.modelName || "未知设备",
+              appVersion: Constants.expoConfig?.version || "1.0.0",
+              permissionStatus: pushPermissionStatus,
+              projectId,
+            }),
+          },
+        );
+        const savedToken = await parseApiResponse<RegisteredPushToken>(response);
+        setPushSyncState(
+          `已同步到服务端：${savedToken.tokenType} / ${savedToken.platform}`,
+        );
+        pushNativeEvent(
+          "Push token 已同步",
+          `${savedToken.deviceName || "当前设备"} 已登记到服务端。`,
+        );
+        showFlash("Push token 已同步");
+        void loadRegisteredTokens();
+      } catch (syncError) {
+        lastSyncedPushKeyRef.current = null;
+        const text =
+          syncError instanceof Error ? syncError.message : "Push token 同步失败";
+        setPushSyncError(text);
+        setPushSyncState("Push token 同步失败");
+        pushNativeEvent("Push token 同步失败", text);
+        showFlash("Push token 同步失败");
+      }
+    },
+    [
+      authToken,
+      baseUrl,
+      loadRegisteredTokens,
+      projectId,
+      pushNativeEvent,
+      pushPermissionStatus,
+      showFlash,
+    ],
+  );
+
+  const registerForPushNotifications = useCallback(async () => {
+    try {
+      setRegisteringPush(true);
+      setPushSyncError(null);
+
+      if (Platform.OS === "android") {
+        await Notifications.setNotificationChannelAsync("default", {
+          name: "default",
+          importance: Notifications.AndroidImportance.DEFAULT,
+        });
+      }
+
+      const currentPermission = await Notifications.getPermissionsAsync();
+      let finalStatus = resolvePermissionStatus(currentPermission);
+      if (finalStatus !== Notifications.PermissionStatus.GRANTED) {
+        const requestedPermission =
+          await Notifications.requestPermissionsAsync();
+        finalStatus = resolvePermissionStatus(requestedPermission);
+      }
+
+      setPushPermissionStatus(finalStatus);
+      if (finalStatus !== Notifications.PermissionStatus.GRANTED) {
+        setPushSyncState("通知权限未授予");
+        setPushSyncError("系统未授予通知权限，无法继续注册远程 Push。");
+        pushNativeEvent(
+          "通知权限未授予",
+          "请在系统设置中开启通知后再次尝试。",
+        );
+        showFlash("通知权限未授予");
+        return;
+      }
+
+      let nextDevicePushToken: string | null = null;
+      let nextExpoPushToken: string | null = null;
+
+      if (Device.isDevice) {
+        try {
+          const rawDeviceToken = await Notifications.getDevicePushTokenAsync();
+          nextDevicePushToken =
+            typeof rawDeviceToken.data === "string"
+              ? rawDeviceToken.data
+              : JSON.stringify(rawDeviceToken.data);
+          setDevicePushToken(nextDevicePushToken);
+        } catch (deviceTokenError) {
+          const text =
+            deviceTokenError instanceof Error
+              ? deviceTokenError.message
+              : "设备 Push token 获取失败";
+          setPushSyncError(text);
+        }
+
+        if (projectId) {
+          try {
+            const expoToken = await Notifications.getExpoPushTokenAsync({
+              projectId,
+            });
+            nextExpoPushToken = expoToken.data;
+            setExpoPushToken(expoToken.data);
+          } catch (expoTokenError) {
+            const text =
+              expoTokenError instanceof Error
+                ? expoTokenError.message
+                : "Expo Push token 获取失败";
+            setPushSyncError(text);
+          }
+        } else {
+          pushNativeEvent(
+            "未配置 Expo projectId",
+            "本地通知可继续测试，若要使用 Expo Push，请在 app 配置中补充 projectId。",
+          );
+        }
+      } else {
+        setPushSyncState("当前是模拟器，可测试本地通知；远程 Push 需真机");
+        pushNativeEvent(
+          "当前是模拟器",
+          "已可测试本地通知，远程 Push 注册需要真机环境。",
+        );
+      }
+
+      const tokenReady = nextExpoPushToken || nextDevicePushToken;
+      if (tokenReady) {
+        setPushSyncState("Push token 已获取，准备同步到服务端");
+        setPushSyncError(null);
+        showFlash("Push token 已获取");
+      } else if (Device.isDevice) {
+        setPushSyncState("已授权通知，但暂未获取到可用 Push token");
+      }
+    } finally {
+      setRegisteringPush(false);
+    }
+  }, [projectId, pushNativeEvent, showFlash]);
+
+  const sendTestNotification = useCallback(async () => {
+    if (pushPermissionStatus !== Notifications.PermissionStatus.GRANTED) {
+      setPushSyncError("请先申请通知权限，然后再发送测试通知。");
+      showFlash("请先申请通知权限");
+      return;
+    }
+
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "GB28181 App",
+          body: `当前页面：${shellTitle}`,
+          data: {
+            shellPath,
+          },
+        },
+        trigger: null,
+      });
+      pushNativeEvent("测试通知已发送", `当前页面：${shellPath}`);
+      showFlash("测试通知已发送");
+    } catch (notificationError) {
+      const text =
+        notificationError instanceof Error
+          ? notificationError.message
+          : "测试通知发送失败";
+      setPushSyncError(text);
+      pushNativeEvent("测试通知发送失败", text);
+      showFlash("测试通知发送失败");
+    }
+  }, [pushNativeEvent, pushPermissionStatus, shellPath, shellTitle, showFlash]);
+
+  useEffect(() => {
+    if (!authToken) {
+      setRegisteredPushTokens([]);
+      lastSyncedPushKeyRef.current = null;
+      if (expoPushToken || devicePushToken) {
+        setPushSyncState("Push token 已获取，等待 H5 登录态同步");
+      } else {
+        setPushSyncState("等待登录后注册 Push");
+      }
+      return;
+    }
+
+    const token = expoPushToken || devicePushToken;
+    if (!token) {
+      void loadRegisteredTokens();
+      return;
+    }
+
+    const tokenType = expoPushToken ? "EXPO" : "DEVICE";
+    const syncKey = `${authToken}:${tokenType}:${token}`;
+    if (lastSyncedPushKeyRef.current === syncKey) {
+      return;
+    }
+
+    lastSyncedPushKeyRef.current = syncKey;
+    void syncPushTokenToServer(token, tokenType);
+  }, [
+    authToken,
+    devicePushToken,
+    expoPushToken,
+    loadRegisteredTokens,
+    syncPushTokenToServer,
+  ]);
+
+  useEffect(() => {
+    if (!pushCenterVisible || !authToken) {
+      return;
+    }
+    void loadRegisteredTokens();
+  }, [authToken, loadRegisteredTokens, pushCenterVisible]);
+
   const handleWebViewMessage = useCallback(
     async (rawMessage: string) => {
       const payload = parseWebViewMessage(rawMessage);
@@ -365,6 +763,19 @@ export function GbWebViewScreen() {
         setShellTitle(payload.title || DEFAULT_PAGE_TITLE);
         setShellCanGoBack(Boolean(payload.canGoBack));
         setShellPath(payload.path || "/m/home");
+        return;
+      }
+
+      if (payload.type === "auth-state") {
+        setAuthToken(payload.token ?? null);
+        setAuthUsername(payload.username ?? null);
+        setAuthRole(payload.role ?? null);
+        setPushSyncError(null);
+
+        if (!payload.token) {
+          lastSyncedPushKeyRef.current = null;
+          setRegisteredPushTokens([]);
+        }
         return;
       }
 
@@ -637,20 +1048,100 @@ export function GbWebViewScreen() {
 
           <ScrollView contentContainerStyle={styles.modalContent}>
             <View style={styles.tipCard}>
-              <Text style={styles.tipTitle}>推送入口已预留</Text>
+              <Text style={styles.tipTitle}>原生消息与 Push 状态</Text>
               <Text style={styles.tipText}>
-                当前已经有原生消息入口、事件流和分享下载回执，后续可直接在这里接入 Expo Push token 注册、消息列表和深链跳转。
+                这里会直接显示当前登录态、通知权限、Push token、服务端同步状态，以及最近的原生通知事件。
               </Text>
-              <Text style={styles.tipHint}>当前页面：{shellPath}</Text>
+              <Text style={styles.tipHint}>
+                当前页面：{shellPath} / 项目 ID：{projectId || "未配置"}
+              </Text>
+            </View>
+
+            <View style={styles.statusGrid}>
+              <View style={styles.statusCard}>
+                <Text style={styles.statusLabel}>当前登录</Text>
+                <Text style={styles.statusValue}>
+                  {authUsername ? `${authUsername}${authRole ? ` / ${authRole}` : ""}` : "未登录"}
+                </Text>
+              </View>
+              <View style={styles.statusCard}>
+                <Text style={styles.statusLabel}>通知权限</Text>
+                <Text style={styles.statusValue}>{pushPermissionStatus}</Text>
+              </View>
+            </View>
+
+            <View style={styles.tokenCard}>
+              <Text style={styles.sectionTitle}>Push Token</Text>
+              <View style={styles.tokenRow}>
+                <Text style={styles.tokenLabel}>Expo Token</Text>
+                <Text style={styles.tokenValue}>{previewToken(expoPushToken)}</Text>
+              </View>
+              <View style={styles.tokenRow}>
+                <Text style={styles.tokenLabel}>Device Token</Text>
+                <Text style={styles.tokenValue}>{previewToken(devicePushToken)}</Text>
+              </View>
+              <View style={styles.tokenRow}>
+                <Text style={styles.tokenLabel}>服务端同步</Text>
+                <Text style={styles.tokenValue}>{pushSyncState}</Text>
+              </View>
+              {pushSyncError ? (
+                <Text style={styles.tokenError}>{pushSyncError}</Text>
+              ) : null}
             </View>
 
             <View style={styles.inlineActions}>
+              <Pressable
+                onPress={() => {
+                  void registerForPushNotifications();
+                }}
+                style={styles.primaryAction}
+              >
+                <Text style={styles.primaryActionText}>
+                  {registeringPush ? "注册中..." : "申请权限并注册 Push"}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  void sendTestNotification();
+                }}
+                style={styles.secondaryAction}
+              >
+                <Text style={styles.secondaryActionText}>发送测试通知</Text>
+              </Pressable>
               <Pressable onPress={reloadPage} style={styles.secondaryAction}>
                 <Text style={styles.secondaryActionText}>刷新当前页面</Text>
               </Pressable>
               <Pressable onPress={openSettings} style={styles.secondaryAction}>
                 <Text style={styles.secondaryActionText}>打开服务器配置</Text>
               </Pressable>
+            </View>
+
+            <View style={styles.feedSection}>
+              <Text style={styles.sectionTitle}>
+                服务端登记记录
+                {loadingPushTokens ? " · 读取中" : ""}
+              </Text>
+              {registeredPushTokens.length === 0 ? (
+                <View style={styles.feedEmptyCard}>
+                  <Text style={styles.feedDetail}>
+                    还没有读取到服务端登记记录。先登录 H5，再点击“申请权限并注册 Push”。
+                  </Text>
+                </View>
+              ) : (
+                registeredPushTokens.map((item) => (
+                  <View key={item.id} style={styles.feedCard}>
+                    <Text style={styles.feedTitle}>
+                      {item.tokenType} / {item.platform}
+                    </Text>
+                    <Text style={styles.feedDetail}>
+                      {item.deviceName || "未知设备"} · {previewToken(item.token)}
+                    </Text>
+                    <Text style={styles.feedTime}>
+                      最近更新 {new Date(item.updatedAt).toLocaleString("zh-CN")}
+                    </Text>
+                  </View>
+                ))
+              )}
             </View>
 
             <View style={styles.feedSection}>
@@ -923,10 +1414,70 @@ const styles = StyleSheet.create({
   feedSection: {
     gap: 12,
   },
+  statusGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  statusCard: {
+    minWidth: 140,
+    flex: 1,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 6,
+  },
+  statusLabel: {
+    fontSize: 12,
+    color: "#64748B",
+  },
+  statusValue: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  tokenCard: {
+    gap: 12,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+  },
+  tokenRow: {
+    gap: 6,
+  },
+  tokenLabel: {
+    fontSize: 12,
+    color: "#64748B",
+  },
+  tokenValue: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: "#0F172A",
+  },
+  tokenError: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: "#DC2626",
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
     color: "#0F172A",
+  },
+  feedEmptyCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: "#CBD5E1",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 16,
+    paddingVertical: 18,
   },
   feedCard: {
     borderRadius: 20,
