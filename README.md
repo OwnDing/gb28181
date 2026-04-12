@@ -4,6 +4,9 @@ A modern, high-performance video surveillance management platform based on the G
 
 基于 GB/T 28181-2016 标准构建的现代化高性能视频监控管理平台。支持设备自动注册、由 ZLMediaKit 驱动的实时预览（H.264/H.265）、云端存储管理以及基于 AI 的目标检测。
 
+**社区支持**
+- 链接： https://linux.do/
+
 ## 🏗 System Architecture / 系统架构
 
 The system consists of four core components:
